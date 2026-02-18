@@ -13,7 +13,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth, clearStoredSession } from '@/hooks/useAuth';
 import { UserRole } from '@/types';
 import { getRoleDisplayName, getRoleDescription, getAllRoles } from '@/utils/rolePermissions';
 
@@ -35,14 +35,40 @@ export default function LoginScreen() {
       return;
     }
 
+    console.log('🟣 [Login] Attempting login with:', { username, password, selectedRole });
     setLoading(true);
     try {
       await login(username, password, selectedRole);
-      // Auth state change will automatically trigger route change in _layout
+      console.log('🟣 [Login] Login successful, navigating to home');
+      // Explicitly navigate to home screen after successful login
+      router.replace('/');
     } catch (error: any) {
-      Alert.alert('Login Failed', error.message || 'An error occurred during login');
+      console.log('🟣 [Login] Login failed:', error.message);
+      // Check if the username matches a known account but wrong role was selected
+      const knownUsernames = ['contractor1', 'architect1', 'builder1'];
+      if (knownUsernames.includes(username.trim())) {
+        Alert.alert(
+          'Login Failed',
+          'Invalid credentials or role mismatch.\n\nMake sure:\n1. Username is correct\n2. Password is correct (e.g., contractor123)\n3. Role matches the account\n\nDemo accounts:\n• contractor1 → Contractor role\n• architect1 → Architect role\n• builder1 → Builder role'
+        );
+      } else {
+        Alert.alert('Login Failed', error.message || 'An error occurred during login');
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Auto-suggest role based on username
+  const handleUsernameChange = (text: string) => {
+    setUsername(text);
+    // Auto-select role if user types a known demo account username
+    if (text === 'contractor1') {
+      setSelectedRole('contractor');
+    } else if (text === 'architect1') {
+      setSelectedRole('architect');
+    } else if (text === 'builder1') {
+      setSelectedRole('builder');
     }
   };
 
@@ -106,7 +132,7 @@ export default function LoginScreen() {
                 style={styles.input}
                 placeholder="Enter your username"
                 value={username}
-                onChangeText={setUsername}
+                onChangeText={handleUsernameChange}
                 editable={!loading}
                 placeholderTextColor="#999"
               />
@@ -246,6 +272,17 @@ export default function LoginScreen() {
               <Text style={styles.infoText}>View-only access</Text>
             </View>
           </View>
+
+          {/* Dev Utility: Clear Stored Session */}
+          <TouchableOpacity
+            style={styles.clearSessionButton}
+            onPress={async () => {
+              await clearStoredSession();
+              Alert.alert('Success', 'Stored session cleared. The app will now show the login screen on next start.');
+            }}
+          >
+            <Text style={styles.clearSessionButtonText}>🔄 Clear Stored Session (Dev)</Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -414,5 +451,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     flex: 1,
+  },
+  clearSessionButton: {
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#CCC',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  clearSessionButtonText: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
   },
 });

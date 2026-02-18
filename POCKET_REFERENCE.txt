@@ -1,0 +1,290 @@
+# POCKET REFERENCE CARD - Print This!
+
+## One Page Guide to Debugging Buttons
+
+---
+
+## 🚀 QUICK START (30 Seconds)
+
+```bash
+npm start
+```
+
+→ Watch the terminal (keep it visible)
+
+→ Tap buttons on your phone
+
+→ Look for colored logs (🔴🟡🟣🔵🟠)
+
+→ If you see logs → Buttons work ✅
+→ If no logs → Reload with 'r' key
+
+---
+
+## 📍 WHERE ARE THE BUTTONS?
+
+```
+Home Screen Top-Right:
+┌──────────────────────┐
+│ 👤 User    🔧  Logout│
+└──────────────────────┘
+        ↑        ↑
+    Debug    Logout
+   (Blue)     (Red)
+```
+
+- **🔧 Blue** = Clear session debug button
+- **Logout Red** = Logout button
+
+---
+
+## 🎨 CONSOLE COLORS (What They Mean)
+
+```
+🔴 RED      User tapped logout button
+🟡 YELLOW   Auth system updated
+🟣 PURPLE   Layout re-rendered (Most Important!)
+🔵 BLUE     User tapped debug button  
+🟠 ORANGE   Session was cleared
+```
+
+**See all 5?** EVERYTHING WORKS! ✅
+
+**Missing some?** Check troubleshooting below
+
+---
+
+## ✅ EXPECTED OUTPUT (After Tapping Logout)
+
+```
+🔴 Logout button pressed
+🔴 Logout confirmed, calling logout()
+🟡 [Auth] logout() called
+🟡 [Auth] removed currentUser from AsyncStorage
+🟡 [Auth] set user to null
+🟡 [Auth] set isLoggedIn to false
+🟣 [Layout] RootLayoutNav rendered - isLoggedIn: false
+```
+
+Then: **Login screen should appear**
+
+---
+
+## 🔧 KEYBOARD SHORTCUTS (In Terminal)
+
+| Key | Action |
+|-----|--------|
+| `r` | Reload app |
+| `c` | Clear cache & reload |
+| `q` | Quit |
+
+---
+
+## 🆘 TROUBLESHOOTING
+
+### No logs when I tap buttons?
+
+Try:
+```bash
+npm start -- --reset-cache
+```
+Then press `r` in terminal
+
+### Logs show but UI didn't change?
+
+Press `r` in terminal to reload
+
+### Buttons not visible?
+
+- Scroll up
+- Rotate device to landscape
+- Tap near the top of screen
+
+### Still stuck after 5 minutes?
+
+Check: `DEBUG_GUIDE.md` (in project folder)
+
+---
+
+## 🧪 QUICK TEST (2 Minutes)
+
+```
+1. Tap 🔧 button
+   → See confirmation dialog?
+   → Tap "Clear"
+   → See 🔵🟠 logs?
+
+2. Tap Logout button
+   → See confirmation dialog?
+   → Tap "Logout"
+   → See 🔴🟡🟣 logs?
+   → Does login screen appear?
+
+3. All YES? You're done! ✅
+```
+
+---
+
+## 📝 DEMO ACCOUNTS
+
+```
+CONTRACTOR (Full Access - Has Create Button):
+  Username: contractor1
+  Password: contractor123
+  Role: Contractor
+
+BUILDER (View Only - No Create Button):
+  Username: builder1
+  Password: builder123
+  Role: Builder
+
+ARCHITECT (Full Access):
+  Username: architect1
+  Password: architect123
+  Role: Architect
+```
+
+---
+
+## 🎯 SUCCESS INDICATORS
+
+- [ ] Buttons are visible in top-right
+- [ ] Buttons respond to taps (confirmation dialogs appear)
+- [ ] See colored logs in console (🔴🟡🟣)
+- [ ] Logout shows login screen
+- [ ] Debug button can clear session
+- [ ] Can login with demo accounts
+- [ ] Contractor shows create button
+- [ ] Builder hides create button
+- [ ] Can logout from all roles
+
+---
+
+## 📚 GET MORE HELP
+
+| Question | Read This |
+|----------|-----------|
+| "Where are buttons?" | VISUAL_GUIDE.md |
+| "What do logs mean?" | CONSOLE_COLORS.md |
+| "Detailed troubleshooting" | DEBUG_GUIDE.md |
+| "What was changed?" | DEBUGGING_SUMMARY.md |
+| "Quick reference" | QUICK_TEST.md |
+
+All files in: `construction-timechart/` folder
+
+---
+
+## 🔍 DIAGNOSTIC DECISION TREE
+
+```
+START
+  ↓
+Do you see colored logs when tapping buttons?
+  ├─ YES → See all 5 colors (🔴🟡🟣🔵🟠)?
+  │         ├─ YES → Everything works! ✅
+  │         └─ NO → See CONSOLE_COLORS.md
+  │
+  └─ NO → Press 'r' to reload
+            ↓
+            Still no logs? → See DEBUG_GUIDE.md Step 4
+```
+
+---
+
+## ⚡ COMMON FIXES
+
+| Issue | Fix |
+|-------|-----|
+| No logs | `npm start -- --reset-cache` then `r` |
+| UI didn't change | Press `r` |
+| Buttons not visible | Scroll up or rotate device |
+| Still logged in after logout | Close and restart app |
+| Can't tap buttons | Reload with `npm start -- --reset-cache` |
+
+---
+
+## 🎮 TESTING WORKFLOW
+
+```
+1. Start app:           npm start
+2. Keep terminal open   (see logs)
+3. Tap button on phone  (watch logs)
+4. Check logs:          See 🔴🟡🟣?
+5. If yes:              Test complete ✅
+6. If no:               Try 'r' to reload
+7. Still no:            See DEBUG_GUIDE.md
+```
+
+---
+
+## 💡 PRO TIPS
+
+- **Always keep terminal visible** - Can't see logs if you can't see terminal
+- **Use emoji to find logs** - Search for 🔴 🟡 🟣 🔵 🟠
+- **Reload often** - Press 'r' when stuck
+- **Test with all 3 roles** - Contractor, Architect, Builder
+- **Check for red errors** - Red error text = real problem
+
+---
+
+## 🚀 YOU'VE GOT THIS!
+
+The buttons have built-in logging. 
+
+The guides have all the answers.
+
+Everything will work once you see all the colored logs.
+
+**Let's go! 🎯**
+
+---
+
+## QUICK LINKS
+
+- Start Testing: Follow "QUICK START" above
+- Need Help: See "TROUBLESHOOTING" above  
+- Learn More: Check "GET MORE HELP" above
+- Understanding Logs: See "CONSOLE COLORS" section above
+
+---
+
+## Print This Card!
+
+```
+✂️ - - - - - - - - - - - - - - - - - - - - ✂️
+
+   BUTTON DEBUGGING POCKET REFERENCE
+        Keep This Nearby While Testing!
+
+   Colors: 🔴 🟡 🟣 🔵 🟠
+   Keys: r = reload, c = clear cache, q = quit
+   Test: npm start → tap button → see logs ✅
+   Help: DEBUG_GUIDE.md in project folder
+
+✂️ - - - - - - - - - - - - - - - - - - - - ✂️
+```
+
+---
+
+## Last Checklist Before Giving Up
+
+- [ ] Terminal is running (`npm start`)
+- [ ] Phone/emulator is connected
+- [ ] Can you see the home screen?
+- [ ] Can you see the buttons (🔧 and Logout)?
+- [ ] Did you tap in the center of the button?
+- [ ] Did you wait 2 seconds after tapping?
+- [ ] Can you see the confirmation dialog?
+- [ ] Did you tap "Logout" or "Clear" in dialog?
+- [ ] Did you check the terminal for colored logs?
+- [ ] Did you try pressing 'r' to reload?
+- [ ] Did you try `npm start -- --reset-cache`?
+
+If all checked but still stuck:
+→ Open `DEBUG_GUIDE.md` and follow step-by-step
+
+---
+
+**Good luck! You can do this!** 🎉
+
+[Save this file or print it for reference]

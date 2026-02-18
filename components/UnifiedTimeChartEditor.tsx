@@ -16,11 +16,13 @@ import {
   FlatList,
   SafeAreaView,
 } from 'react-native';
-import { TimeChartData, Activity } from '../types';
+import { TimeChartData, Activity, User } from '../types';
 import { getDaysBetween, isPublicHoliday } from '../utils/dateUtils';
+import { canPerformAction } from '../utils/rolePermissions';
 
 interface UnifiedTimeChartEditorProps {
   timechart: TimeChartData;
+  user?: User | null; // Add user prop for permission checking
   onAddHoliday: (holiday: any) => void;
   onRemoveHoliday: (id: string) => void;
   onAddSubcontractor: (name: string) => void;
@@ -37,6 +39,7 @@ interface UnifiedTimeChartEditorProps {
 
 export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   timechart,
+  user,
   onAddHoliday,
   onRemoveHoliday,
   onAddSubcontractor,
@@ -112,6 +115,12 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   ];
 
   const handleAddHoliday = () => {
+    // Check if user has permission to add holidays
+    if (user && !canPerformAction(user.role, 'canAddHoliday')) {
+      Alert.alert('Permission Denied', 'You do not have permission to add holidays.');
+      return;
+    }
+
     if (!holidayName.trim() || !holidayDate.trim()) {
       Alert.alert('Error', 'Please enter holiday name and date');
       return;
@@ -146,6 +155,12 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   const handleAddActivity = () => {
+    // Check if user has permission to add activities
+    if (user && !canPerformAction(user.role, 'canAddActivity')) {
+      Alert.alert('Permission Denied', 'You do not have permission to add activities.');
+      return;
+    }
+
     if (!activityName.trim()) {
       Alert.alert('Error', 'Please enter activity name');
       return;
@@ -264,6 +279,13 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   const handleActivityPressIn = (activity: Activity, event: GestureResponderEvent) => {
+    // Check if user has permission to edit activities
+    if (user && !canPerformAction(user.role, 'canEditActivity')) {
+      console.log('🔴 [Permission] User does not have permission to edit activities');
+      Alert.alert('Permission Denied', 'You do not have permission to edit timechart activities. Your role is view-only.');
+      return;
+    }
+
     setDraggingActivityId(activity.id);
     setDragStartX(event.nativeEvent.pageX);
     setDragActivity(activity);
@@ -590,7 +612,16 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <Text style={styles.contractorCellText} numberOfLines={1}>
               {contractorName}
             </Text>
-            <TouchableOpacity onPress={() => onRemoveActivity(activity.id)}>
+            <TouchableOpacity 
+              onPress={() => {
+                // Check if user has permission to delete activities
+                if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
+                  Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
+                  return;
+                }
+                onRemoveActivity(activity.id);
+              }}
+            >
               <Text style={styles.removeActivityText}>✕</Text>
             </TouchableOpacity>
           </View>
@@ -611,20 +642,50 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       {/* Control Panel Header */}
       <View style={styles.controlPanel}>
         <TouchableOpacity
-          style={styles.controlButton}
-          onPress={() => setShowAddActivityModal(true)}
+          style={[
+            styles.controlButton,
+            user && !canPerformAction(user.role, 'canAddActivity') && styles.disabledButton,
+          ]}
+          onPress={() => {
+            if (user && !canPerformAction(user.role, 'canAddActivity')) {
+              Alert.alert('Permission Denied', 'You do not have permission to add activities.');
+              return;
+            }
+            setShowAddActivityModal(true);
+          }}
+          disabled={user ? !canPerformAction(user.role, 'canAddActivity') : false}
         >
           <Text style={styles.controlButtonText}>+ Activity</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.controlButton}
-          onPress={() => setShowAddHolidayModal(true)}
+          style={[
+            styles.controlButton,
+            user && !canPerformAction(user.role, 'canAddHoliday') && styles.disabledButton,
+          ]}
+          onPress={() => {
+            if (user && !canPerformAction(user.role, 'canAddHoliday')) {
+              Alert.alert('Permission Denied', 'You do not have permission to add holidays.');
+              return;
+            }
+            setShowAddHolidayModal(true);
+          }}
+          disabled={user ? !canPerformAction(user.role, 'canAddHoliday') : false}
         >
           <Text style={styles.controlButtonText}>+ Holiday</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.controlButton}
-          onPress={() => setShowAddContractorModal(true)}
+          style={[
+            styles.controlButton,
+            user && !canPerformAction(user.role, 'canAddSubcontractor') && styles.disabledButton,
+          ]}
+          onPress={() => {
+            if (user && !canPerformAction(user.role, 'canAddSubcontractor')) {
+              Alert.alert('Permission Denied', 'You do not have permission to add contractors.');
+              return;
+            }
+            setShowAddContractorModal(true);
+          }}
+          disabled={user ? !canPerformAction(user.role, 'canAddSubcontractor') : false}
         >
           <Text style={styles.controlButtonText}>+ Contractor</Text>
         </TouchableOpacity>
@@ -634,12 +695,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         >
           <Text style={styles.controlButtonText}>+ Floor Level</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.controlButton}
-          onPress={() => setShowManagePanelModal(true)}
-        >
-          <Text style={styles.controlButtonText}>Manage</Text>
-        </TouchableOpacity>
+        {/* Only show Manage button for users with edit permissions */}
+        {!user || canPerformAction(user.role, 'canEdit') ? (
+          <TouchableOpacity
+            style={styles.controlButton}
+            onPress={() => setShowManagePanelModal(true)}
+          >
+            <Text style={styles.controlButtonText}>Manage</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Timechart */}
@@ -966,7 +1030,16 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                         {new Date(holiday.date).toLocaleDateString()}
                       </Text>
                     </View>
-                    <TouchableOpacity onPress={() => onRemoveHoliday(holiday.id)}>
+                    <TouchableOpacity 
+                      onPress={() => {
+                        // Check if user has permission to delete holidays
+                        if (user && !canPerformAction(user.role, 'canDeleteHoliday')) {
+                          Alert.alert('Permission Denied', 'You do not have permission to delete holidays.');
+                          return;
+                        }
+                        onRemoveHoliday(holiday.id);
+                      }}
+                    >
                       <Text style={styles.removeButton}>✕</Text>
                     </TouchableOpacity>
                   </View>
@@ -1229,6 +1302,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 6,
+  },
+  disabledButton: {
+    backgroundColor: '#CCCCCC',
+    opacity: 0.6,
   },
   controlButtonText: {
     color: '#FFF',

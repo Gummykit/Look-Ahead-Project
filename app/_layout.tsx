@@ -15,8 +15,11 @@ function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const { isLoggedIn, isLoading } = useAuth();
 
+  console.log('🟣 [Layout] RootLayoutNav rendered - isLoggedIn:', isLoggedIn, 'isLoading:', isLoading);
+
   // Show loading screen while auth state is being checked
   if (isLoading) {
+    console.log('🟣 [Layout] Still loading, showing spinner');
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
         <ActivityIndicator size="large" color="#0066CC" />
@@ -24,36 +27,40 @@ function RootLayoutNav() {
     );
   }
 
+  console.log('🟣 [Layout] Auth state ready - isLoggedIn:', isLoggedIn);
+
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack screenOptions={{ headerShown: false }}>
-        {isLoggedIn ? (
-          // Show app screens when logged in
-          <>
-            <Stack.Screen 
-              name="index" 
-              options={{ headerShown: false }} 
-            />
-            <Stack.Screen 
-              name="create-project" 
-              options={{ headerShown: false }} 
-            />
-            <Stack.Screen 
-              name="editor" 
-              options={{ headerShown: false }} 
-            />
-            <Stack.Screen 
-              name="(tabs)" 
-              options={{ headerShown: false }} 
-            />
-          </>
-        ) : (
-          // Show login screen when not logged in (this is now the home screen)
-          <Stack.Screen 
-            name="login" 
-            options={{ headerShown: false }} 
-          />
-        )}
+      <Stack 
+        screenOptions={{ headerShown: false }}
+        // Key the stack to force re-render when auth state changes
+        key={isLoggedIn ? 'authenticated' : 'unauthenticated'}
+        // Set initial route based on auth state
+        initialRouteName={isLoggedIn ? 'index' : 'login'}
+      >
+        {/* Always define all screens - expo-router requires static registration */}
+        <Stack.Screen 
+          name="login" 
+          options={{ 
+            headerShown: false,
+          }} 
+        />
+        <Stack.Screen 
+          name="index" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="create-project" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="editor" 
+          options={{ headerShown: false }} 
+        />
+        <Stack.Screen 
+          name="(tabs)" 
+          options={{ headerShown: false }} 
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

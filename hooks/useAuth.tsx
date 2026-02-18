@@ -70,10 +70,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = async (username: string, password: string, role: UserRole) => {
     try {
+      console.log('🟡 [Auth] login() called with:', { username, password, role });
+      console.log('🟡 [Auth] Available mock users:', mockUsers.map(u => ({ username: u.username, password: u.password, role: u.role })));
+      
       // Find user in mock database
       const foundUser = mockUsers.find(
         (u) => u.username === username && u.password === password && u.role === role
       );
+
+      console.log('🟡 [Auth] foundUser:', foundUser ? `Found ${foundUser.username}` : 'NOT FOUND');
 
       if (!foundUser) {
         throw new Error('Invalid username, password, or role');
@@ -87,8 +92,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       // Save user to AsyncStorage
       await AsyncStorage.setItem('currentUser', JSON.stringify(loggedInUser));
+      console.log('🟡 [Auth] Saved to AsyncStorage');
       setUser(loggedInUser);
+      console.log('🟡 [Auth] Set user state');
       setIsLoggedIn(true);
+      console.log('🟡 [Auth] Set isLoggedIn to true');
     } catch (error) {
       console.error('Login error:', error);
       throw error;
@@ -97,11 +105,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const logout = async () => {
     try {
+      console.log('🟡 [Auth] logout() called');
       await AsyncStorage.removeItem('currentUser');
+      console.log('🟡 [Auth] removed currentUser from AsyncStorage');
       setUser(null);
+      console.log('🟡 [Auth] set user to null');
       setIsLoggedIn(false);
+      console.log('🟡 [Auth] set isLoggedIn to false');
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('🟡 [Auth] Logout error:', error);
       throw error;
     }
   };
@@ -164,4 +176,18 @@ export const useAuth = (): IAuthContext => {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
+};
+
+/**
+ * Development utility: Clear stored session (for testing login flow)
+ * WARNING: Only use for development/testing!
+ */
+export const clearStoredSession = async () => {
+  try {
+    console.log('🟠 [Dev] clearStoredSession() called');
+    await AsyncStorage.removeItem('currentUser');
+    console.log('🟠 [Dev] ✅ Stored session cleared. App will show login screen on next start.');
+  } catch (error) {
+    console.error('🟠 [Dev] Error clearing session:', error);
+  }
 };

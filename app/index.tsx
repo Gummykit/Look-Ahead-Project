@@ -13,7 +13,7 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { TimeChartData } from '@/types';
 import { getAllTimecharts, deleteTimechart } from '@/utils/storage';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth, clearStoredSession } from '@/hooks/useAuth';
 import { canPerformAction, getRoleDisplayName } from '@/utils/rolePermissions';
 
 export default function HomeScreen() {
@@ -21,6 +21,16 @@ export default function HomeScreen() {
   const { user, logout } = useAuth();
   const [timecharts, setTimecharts] = useState<TimeChartData[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Modal state for confirmations
+  const [confirmModal, setConfirmModal] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    confirmText: '',
+    onConfirm: async () => {},
+    isDangerous: false,
+  });
 
   const canDeleteProjects = user && canPerformAction(user.role, 'canDelete');
   const canCreateProjects = user && canPerformAction(user.role, 'canEdit');
@@ -44,50 +54,82 @@ export default function HomeScreen() {
       return;
     }
 
-    Alert.alert(
-      'Delete Timechart',
-      'Are you sure you want to delete this timechart? This action cannot be undone.',
-      [
-        { 
-          text: 'Cancel', 
-          onPress: () => console.log('Delete cancelled'),
-          style: 'cancel'
-        },
-        {
-          text: 'Delete',
-          onPress: async () => {
-            try {
-              await deleteTimechart(id);
-              await loadTimecharts();
-              Alert.alert('Success', 'Timechart deleted successfully');
-            } catch (error) {
-              console.error('Error deleting timechart:', error);
-              Alert.alert('Error', 'Failed to delete timechart');
-            }
-          },
-          style: 'destructive'
-        },
-      ],
-      { cancelable: false }
-    );
+    setConfirmModal({
+      visible: true,
+      title: 'Delete Project',
+      message: 'Are you sure you want to delete this timechart? This action cannot be undone.',
+      confirmText: 'Delete',
+      isDangerous: true,
+      onConfirm: async () => {
+        try {
+          console.log('🔴 Delete project confirmed, deleting timechart:', id);
+          await deleteTimechart(id);
+          console.log('🔴 Timechart deleted, reloading list');
+          await loadTimecharts();
+          setConfirmModal({ ...confirmModal, visible: false });
+          console.log('🔴 Project list reloaded after deletion');
+        } catch (error) {
+          console.error('🔴 Error deleting timechart:', error);
+          setConfirmModal({ ...confirmModal, visible: false });
+          Alert.alert('Error', 'Failed to delete timechart');
+        }
+      },
+    });
   };
 
   const handleLogout = async () => {
-    Alert.alert('Logout', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        onPress: async () => {
-          try {
-            await logout();
-            // Layout will automatically show login screen when isLoggedIn becomes false
-          } catch (error) {
-            Alert.alert('Error', 'Failed to logout');
-          }
-        },
-        style: 'destructive',
+    console.log('🔴 Logout button pressed');
+    setConfirmModal({
+      visible: true,
+      title: 'Logout',
+      message: 'Are you sure you want to log out?',
+      confirmText: 'Logout',
+      isDangerous: true,
+      onConfirm: async () => {
+        try {
+          console.log('🔴 Logout confirmed, calling logout()');
+          await logout();
+          console.log('🔴 Logout completed');
+          setConfirmModal({ ...confirmModal, visible: false });
+          // Explicitly navigate to login after logout completes
+          console.log('🔴 Navigating to login screen');
+          router.replace('/login');
+        } catch (error) {
+          console.error('🔴 Logout error:', error);
+          setConfirmModal({ ...confirmModal, visible: false });
+          Alert.alert('Error', 'Failed to logout');
+        }
       },
-    ]);
+    });
+  };
+
+  const handleClearSession = async () => {
+    console.log('🔵 Debug button (clear session) pressed');
+    setConfirmModal({
+      visible: true,
+      title: 'Clear Stored Session',
+      message: 'This will clear the stored login session. You will be logged out and see the login screen on next start.',
+      confirmText: 'Clear',
+      isDangerous: true,
+      onConfirm: async () => {
+        try {
+          console.log('🔵 Clear session confirmed');
+          console.log('🔵 Calling clearStoredSession()');
+          await clearStoredSession();
+          console.log('🔵 Stored session cleared, calling logout()');
+          await logout();
+          console.log('🔵 Logout completed');
+          setConfirmModal({ ...confirmModal, visible: false });
+          // Explicitly navigate to login after clear completes
+          console.log('🔵 Navigating to login screen');
+          router.replace('/login');
+        } catch (error) {
+          console.error('🔵 Clear session error:', error);
+          setConfirmModal({ ...confirmModal, visible: false });
+          Alert.alert('Error', 'Failed to clear session');
+        }
+      },
+    });
   };
 
   const renderTimechartItem = ({ item }: { item: TimeChartData }) => (
@@ -140,12 +182,20 @@ export default function HomeScreen() {
           <Text style={styles.userName}>👤 {user?.fullName}</Text>
           <Text style={styles.userRole}>{getRoleDisplayName(user?.role || 'builder')}</Text>
         </View>
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={handleLogout}
-        >
-          <Text style={styles.logoutButtonText}>Logout</Text>
-        </TouchableOpacity>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity
+            style={styles.debugButton}
+            onPress={handleClearSession}
+          >
+            <Text style={styles.debugButtonText}>🔧</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={handleLogout}
+          >
+            <Text style={styles.logoutButtonText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.header}>
@@ -179,6 +229,30 @@ export default function HomeScreen() {
         >
           <Text style={styles.fabText}>+</Text>
         </TouchableOpacity>
+      )}
+
+      {/* Custom Confirmation Modal */}
+      {confirmModal.visible && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{confirmModal.title}</Text>
+            <Text style={styles.modalMessage}>{confirmModal.message}</Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setConfirmModal({ ...confirmModal, visible: false })}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalConfirmButton, confirmModal.isDangerous && styles.modalDangerButton]}
+                onPress={confirmModal.onConfirm}
+              >
+                <Text style={styles.modalConfirmText}>{confirmModal.confirmText}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -231,12 +305,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#CCE5FF',
   },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  debugButton: {
+    backgroundColor: '#0088CC',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  debugButtonText: {
+    fontSize: 14,
+  },
   logoutButton: {
     backgroundColor: '#FF4444',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 6,
-    marginLeft: 12,
   },
   logoutButtonText: {
     fontSize: 12,
@@ -349,5 +437,70 @@ const styles = StyleSheet.create({
     fontSize: 36,
     color: '#FFF',
     fontWeight: '300',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '80%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 12,
+  },
+  modalMessage: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'flex-end',
+  },
+  modalCancelButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F0F0F0',
+  },
+  modalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  modalConfirmButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#0066CC',
+  },
+  modalDangerButton: {
+    backgroundColor: '#FF4444',
+  },
+  modalConfirmText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFF',
   },
 });

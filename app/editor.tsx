@@ -11,10 +11,12 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { TimeChartData } from '@/types';
 import { getTimechart, saveTimechart } from '@/utils/storage';
 import { UnifiedTimeChartEditor } from '@/components/UnifiedTimeChartEditor';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function EditorScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
+  const { user } = useAuth();
   const [timechart, setTimechart] = useState<TimeChartData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -112,12 +114,84 @@ export default function EditorScreen() {
 
   const handleUpdateActivity = (id: string, updatedActivity: any) => {
     if (!timechart) return;
-    setTimechart({
+
+    // Find the original activity to compare dates
+    const originalActivity = timechart.activities.find(a => a.id === id);
+    if (!originalActivity) return;
+
+    // Normalize dates for comparison (remove time component, use UTC)
+    const normalizeDate = (date: Date | string) => {
+      const d = new Date(date);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().split('T')[0];
+    };
+
+    // Check if the dates have changed (e.g., due to dragging)
+    const startDateChanged = updatedActivity.startDate && 
+      normalizeDate(updatedActivity.startDate) !== normalizeDate(originalActivity.startDate);
+    const endDateChanged = updatedActivity.endDate && 
+      normalizeDate(updatedActivity.endDate) !== normalizeDate(originalActivity.endDate);
+
+    console.log('🟡 [Daily Logs] startDateChanged:', startDateChanged, 'endDateChanged:', endDateChanged);
+    console.log('🟡 [Daily Logs] Old start:', normalizeDate(originalActivity.startDate), 'New start:', normalizeDate(updatedActivity.startDate));
+
+    let updatedTimechart = {
       ...timechart,
       activities: timechart.activities.map(a =>
         a.id === id ? { ...a, ...updatedActivity } : a
       ),
-    });
+    };
+
+    // If dates changed, migrate daily activity logs to new dates
+    if ((startDateChanged || endDateChanged) && timechart.dailyActivityLogs.length > 0) {
+      // Calculate the date offset (how many days the activity was moved)
+      const oldStart = new Date(originalActivity.startDate);
+      const newStart = new Date(updatedActivity.startDate);
+      
+      // Normalize to midnight UTC for accurate day difference calculation
+      oldStart.setUTCHours(0, 0, 0, 0);
+      newStart.setUTCHours(0, 0, 0, 0);
+      
+      const daysDifference = Math.round(
+        (newStart.getTime() - oldStart.getTime()) / (1000 * 60 * 60 * 24)
+      );
+
+      console.log('🟡 [Daily Logs] Activity moved. Old start:', oldStart.toISOString(), 'New start:', newStart.toISOString());
+      console.log('🟡 [Daily Logs] Days difference:', daysDifference);
+
+      if (daysDifference !== 0) {
+        console.log('🟡 [Daily Logs] Found logs to migrate for activity:', id);
+        
+        // Migrate all daily logs for this activity
+        const migratedLogs = timechart.dailyActivityLogs.map(log => {
+          if (log.activityId === id) {
+            // Create new date by shifting the log date by the same offset
+            const oldLogDate = new Date(log.date);
+            oldLogDate.setUTCHours(0, 0, 0, 0);
+            
+            const newLogDate = new Date(oldLogDate);
+            newLogDate.setDate(newLogDate.getDate() + daysDifference);
+            
+            console.log('🟡 [Daily Logs] Migrating log from', oldLogDate.toISOString().split('T')[0], 'to', newLogDate.toISOString().split('T')[0]);
+            
+            return {
+              ...log,
+              date: newLogDate,
+              updatedAt: new Date(),
+            };
+          }
+          return log;
+        });
+
+        updatedTimechart = {
+          ...updatedTimechart,
+          dailyActivityLogs: migratedLogs,
+        };
+      } else {
+        console.log('🟡 [Daily Logs] No date change detected (daysDifference is 0)');
+      }
+    }
+
+    setTimechart(updatedTimechart);
   };
 
   const handleRemoveActivity = (id: string) => {
@@ -250,6 +324,7 @@ export default function EditorScreen() {
       <UnifiedTimeChartEditor
         key={timechart.id}
         timechart={timechart}
+        user={user}
         onAddHoliday={handleAddHoliday}
         onRemoveHoliday={handleRemoveHoliday}
         onAddSubcontractor={handleAddSubcontractor}
