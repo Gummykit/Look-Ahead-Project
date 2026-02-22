@@ -24,6 +24,19 @@ export const isPublicHoliday = (date: Date, holidays: { date: Date }[]): boolean
   });
 };
 
+export const isNonWorkingDay = (date: Date, nonWorkingDays: { date: Date }[]): boolean => {
+  if (!nonWorkingDays || nonWorkingDays.length === 0) return false;
+  
+  const checkDate = new Date(date);
+  checkDate.setHours(0, 0, 0, 0);
+  
+  return nonWorkingDays.some(day => {
+    const dayDate = new Date(day.date);
+    dayDate.setHours(0, 0, 0, 0);
+    return checkDate.getTime() === dayDate.getTime();
+  });
+};
+
 export const getWeekNumber = (date: Date): number => {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;

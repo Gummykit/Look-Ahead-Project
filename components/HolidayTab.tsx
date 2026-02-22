@@ -8,56 +8,56 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
-import { PublicHoliday } from '../types';
+import { NonWorkingDay } from '../types';
 
-interface HolidayTabProps {
-  holidays: PublicHoliday[];
-  onAddHoliday: (holiday: PublicHoliday) => void;
-  onRemoveHoliday: (id: string) => void;
+interface NonWorkingDayTabProps {
+  nonWorkingDays: NonWorkingDay[];
+  onAddNonWorkingDay: (day: NonWorkingDay) => void;
+  onRemoveNonWorkingDay: (id: string) => void;
   startDate: Date;
   endDate: Date;
 }
 
-export const HolidayTab: React.FC<HolidayTabProps> = ({
-  holidays,
-  onAddHoliday,
-  onRemoveHoliday,
+export const HolidayTab: React.FC<NonWorkingDayTabProps> = ({
+  nonWorkingDays,
+  onAddNonWorkingDay,
+  onRemoveNonWorkingDay,
   startDate,
   endDate,
 }) => {
-  const [holidayName, setHolidayName] = useState('');
-  const [holidayDate, setHolidayDate] = useState(new Date().toISOString().split('T')[0]);
+  const [nonWorkingDayName, setNonWorkingDayName] = useState('');
+  const [nonWorkingDayDate, setNonWorkingDayDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const handleAddHoliday = () => {
-    if (!holidayName.trim()) {
-      Alert.alert('Error', 'Please enter a holiday name');
+  const handleAddNonWorkingDay = () => {
+    if (!nonWorkingDayName.trim()) {
+      Alert.alert('Error', 'Please enter a non-working day name');
       return;
     }
 
-    const date = new Date(holidayDate);
+    const date = new Date(nonWorkingDayDate);
     if (date < startDate || date > endDate) {
-      Alert.alert('Error', 'Holiday date must be within project timeline');
+      Alert.alert('Error', 'Non-working day date must be within project timeline');
       return;
     }
 
-    onAddHoliday({
+    onAddNonWorkingDay({
       id: Math.random().toString(36).substr(2, 9),
       date,
-      name: holidayName.trim(),
+      name: nonWorkingDayName.trim(),
       color: '#FF6B6B',
     });
 
-    setHolidayName('');
-    setHolidayDate(new Date().toISOString().split('T')[0]);
+    setNonWorkingDayName('');
+    setNonWorkingDayDate(new Date().toISOString().split('T')[0]);
   };
 
-  const renderHolidayItem = ({ item }: { item: PublicHoliday }) => (
-    <View style={styles.holidayItem}>
-      <View style={styles.holidayInfo}>
-        <Text style={styles.holidayName}>{item.name}</Text>
-        <Text style={styles.holidayDate}>{new Date(item.date).toLocaleDateString()}</Text>
+  const renderNonWorkingDayItem = ({ item }: { item: NonWorkingDay }) => (
+    <View style={styles.nonWorkingDayItem}>
+      <View style={styles.nonWorkingDayInfo}>
+        <Text style={styles.nonWorkingDayName}>{item.name}</Text>
+        <Text style={styles.nonWorkingDayDate}>{new Date(item.date).toLocaleDateString()}</Text>
       </View>
-      <TouchableOpacity onPress={() => onRemoveHoliday(item.id)}>
+      <TouchableOpacity onPress={() => onRemoveNonWorkingDay(item.id)}>
         <Text style={styles.deleteButton}>✕</Text>
       </TouchableOpacity>
     </View>
@@ -66,39 +66,39 @@ export const HolidayTab: React.FC<HolidayTabProps> = ({
   return (
     <View style={styles.container}>
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Add Public Holiday</Text>
+        <Text style={styles.sectionTitle}>Add Non-Working Day</Text>
         
         <TextInput
           style={styles.input}
-          placeholder="Holiday name (e.g., Christmas, New Year)"
+          placeholder="Non-working day name (e.g., Christmas, New Year)"
           placeholderTextColor="#999"
-          value={holidayName}
-          onChangeText={setHolidayName}
+          value={nonWorkingDayName}
+          onChangeText={setNonWorkingDayName}
         />
 
         <TextInput
           style={styles.input}
           placeholder="Date (YYYY-MM-DD)"
           placeholderTextColor="#999"
-          value={holidayDate}
-          onChangeText={setHolidayDate}
+          value={nonWorkingDayDate}
+          onChangeText={setNonWorkingDayDate}
         />
 
-        <TouchableOpacity style={styles.addButton} onPress={handleAddHoliday}>
-          <Text style={styles.addButtonText}>Add Holiday</Text>
+        <TouchableOpacity style={styles.addButton} onPress={handleAddNonWorkingDay}>
+          <Text style={styles.addButtonText}>Add Non-Working Day</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>
-          Holidays ({holidays.length})
+          Non-Working Days ({nonWorkingDays.length})
         </Text>
-        {holidays.length === 0 ? (
-          <Text style={styles.emptyText}>No holidays added yet</Text>
+        {nonWorkingDays.length === 0 ? (
+          <Text style={styles.emptyText}>No non-working days added yet</Text>
         ) : (
           <FlatList
-            data={holidays}
-            renderItem={renderHolidayItem}
+            data={nonWorkingDays}
+            renderItem={renderNonWorkingDayItem}
             keyExtractor={(item) => item.id}
             scrollEnabled={false}
           />
@@ -154,7 +154,21 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#FF6B6B',
   },
+  nonWorkingDayItem: {
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF6B6B',
+  },
   holidayInfo: {
+    flex: 1,
+  },
+  nonWorkingDayInfo: {
     flex: 1,
   },
   holidayName: {
@@ -162,7 +176,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
+  nonWorkingDayName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
   holidayDate: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
+  },
+  nonWorkingDayDate: {
     fontSize: 12,
     color: '#999',
     marginTop: 4,

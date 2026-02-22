@@ -44,17 +44,18 @@ export default function EditorScreen() {
 
   const handleAddHoliday = (holiday: any) => {
     if (!timechart) return;
-    const exists = timechart.publicHolidays.some(
+    const nonWorkingDays = timechart.nonWorkingDays || [];
+    const exists = nonWorkingDays.some(
       h => new Date(h.date).toDateString() === new Date(holiday.date).toDateString()
     );
     if (exists) {
-      Alert.alert('Error', 'Holiday already exists on this date');
+      Alert.alert('Error', 'Non-working day already exists on this date');
       return;
     }
     setTimechart({
       ...timechart,
-      publicHolidays: [
-        ...timechart.publicHolidays,
+      nonWorkingDays: [
+        ...nonWorkingDays,
         { ...holiday, id: Math.random().toString(36).substr(2, 9) }
       ],
     });
@@ -64,7 +65,7 @@ export default function EditorScreen() {
     if (!timechart) return;
     setTimechart({
       ...timechart,
-      publicHolidays: timechart.publicHolidays.filter(h => h.id !== id),
+      nonWorkingDays: (timechart.nonWorkingDays || []).filter(h => h.id !== id),
     });
   };
 
@@ -325,8 +326,8 @@ export default function EditorScreen() {
         key={timechart.id}
         timechart={timechart}
         user={user}
-        onAddHoliday={handleAddHoliday}
-        onRemoveHoliday={handleRemoveHoliday}
+        onAddNonWorkingDay={handleAddHoliday}
+        onRemoveNonWorkingDay={handleRemoveHoliday}
         onAddSubcontractor={handleAddSubcontractor}
         onRemoveSubcontractor={handleRemoveSubcontractor}
         onAddActivity={handleAddActivity}

@@ -17,14 +17,16 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { TimeChartData, Activity, User } from '../types';
-import { getDaysBetween, isPublicHoliday } from '../utils/dateUtils';
+import { getDaysBetween, isPublicHoliday, isNonWorkingDay } from '../utils/dateUtils';
 import { canPerformAction } from '../utils/rolePermissions';
 
 interface UnifiedTimeChartEditorProps {
   timechart: TimeChartData;
   user?: User | null; // Add user prop for permission checking
-  onAddHoliday: (holiday: any) => void;
-  onRemoveHoliday: (id: string) => void;
+  onAddHoliday?: (holiday: any) => void; // Deprecated, use onAddNonWorkingDay
+  onRemoveHoliday?: (id: string) => void; // Deprecated, use onRemoveNonWorkingDay
+  onAddNonWorkingDay?: (day: any) => void;
+  onRemoveNonWorkingDay?: (id: string) => void;
   onAddSubcontractor: (name: string) => void;
   onRemoveSubcontractor: (id: string) => void;
   onAddActivity: (activity: any) => void;
@@ -42,6 +44,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   user,
   onAddHoliday,
   onRemoveHoliday,
+  onAddNonWorkingDay,
+  onRemoveNonWorkingDay,
   onAddSubcontractor,
   onRemoveSubcontractor,
   onAddActivity,
@@ -115,14 +119,14 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   ];
 
   const handleAddHoliday = () => {
-    // Check if user has permission to add holidays
+    // Check if user has permission to add non-working days
     if (user && !canPerformAction(user.role, 'canAddHoliday')) {
-      Alert.alert('Permission Denied', 'You do not have permission to add holidays.');
+      Alert.alert('Permission Denied', 'You do not have permission to add non-working days.');
       return;
     }
 
     if (!holidayName.trim() || !holidayDate.trim()) {
-      Alert.alert('Error', 'Please enter holiday name and date');
+      Alert.alert('Error', 'Please enter non-working day name and date');
       return;
     }
 
@@ -139,15 +143,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     endDateCopy.setHours(0, 0, 0, 0);
     
     if (holidayDateObj.getTime() < startDateCopy.getTime() || holidayDateObj.getTime() > endDateCopy.getTime()) {
-      Alert.alert('Error', 'Holiday date must be within project timeline');
+      Alert.alert('Error', 'Non-working day date must be within project timeline');
       return;
     }
 
-    onAddHoliday({
-      date: holidayDateObj,
-      name: holidayName.trim(),
-      color: '#FFE0E0',
-    });
+    const addFunction = onAddNonWorkingDay || onAddHoliday;
+    if (addFunction) {
+      addFunction({
+        date: holidayDateObj,
+        name: holidayName.trim(),
+        color: '#FFE0E0',
+      });
+    }
 
     setHolidayName('');
     setHolidayDate('');
@@ -423,6 +430,38 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setDailyLogImages(prevImages => prevImages.filter((_, i) => i !== index));
   };
 
+  const handleToggleActivityCompletion = (activityId: string) => {
+    // Check if user has permission to edit activities
+    if (user && !canPerformAction(user.role, 'canEdit')) {
+      Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
+      return;
+    }
+
+    const activity = timechart.activities.find(a => a.id === activityId);
+    if (activity) {
+      onUpdateActivity(activityId, {
+        ...activity,
+        isCompleted: !activity.isCompleted
+      });
+    }
+  };
+
+  const handleToggleActivityStarted = (activityId: string) => {
+    // Check if user has permission to edit activities
+    if (user && !canPerformAction(user.role, 'canEdit')) {
+      Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
+      return;
+    }
+
+    const activity = timechart.activities.find(a => a.id === activityId);
+    if (activity) {
+      onUpdateActivity(activityId, {
+        ...activity,
+        isStarted: !activity.isStarted
+      });
+    }
+  };
+
   const renderDayHeaders = () => {
     const items = [];
 
@@ -430,7 +469,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       const currentDate = new Date(timechart.startDate);
       currentDate.setDate(currentDate.getDate() + i);
 
-      const isHoliday = isPublicHoliday(currentDate, timechart.publicHolidays);
+      const isHoliday = isNonWorkingDay(currentDate, timechart.nonWorkingDays || timechart.publicHolidays || []);
       const isWeekend = currentDate.getDay() === 0; // Only Sunday is weekend
       const dayOfMonth = currentDate.getDate();
       const dayName = currentDate.toLocaleString('en-US', { weekday: 'short' });
@@ -524,7 +563,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       const currentDate = new Date(timechart.startDate);
       currentDate.setDate(currentDate.getDate() + i);
 
-      const isHoliday = isPublicHoliday(currentDate, timechart.publicHolidays);
+      const isHoliday = isNonWorkingDay(currentDate, timechart.nonWorkingDays || timechart.publicHolidays || []);
       const isWeekend = currentDate.getDay() === 0; // Only Sunday is weekend
       const isActivityDay = i >= displayStartDay && i < endDay;
 
@@ -571,6 +610,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                       backgroundColor: displayActivity.floorLevelColor,
                       opacity: draggingActivityId === activity.id ? 0.7 : 1,
                     },
+                    displayActivity.isCompleted && styles.completedActivityIndicator,
                   ]}
                 />
                 {/* Visual indicator for daily log */}
@@ -597,7 +637,13 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return (
         <View key={`activity-${activity.id}`} style={styles.activityRowContainer}>
           <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
-            <Text style={styles.activityCellText} numberOfLines={2}>
+            <Text 
+              style={[
+                styles.activityCellText,
+                activity.isCompleted && styles.completedActivityCellText
+              ]} 
+              numberOfLines={2}
+            >
               {activity.name}
             </Text>
           </View>
@@ -612,6 +658,35 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <Text style={styles.contractorCellText} numberOfLines={1}>
               {contractorName}
             </Text>
+            <TouchableOpacity 
+              onPress={() => {
+                // Check if user has permission to mark complete
+                if (user && !canPerformAction(user.role, 'canEdit')) {
+                  Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
+                  return;
+                }
+                handleToggleActivityCompletion(activity.id);
+              }}
+            >
+              <Text style={[styles.completeActivityText, activity.isCompleted && styles.completeActivityTextActive]}>
+                ✓
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              onPress={() => {
+                // Check if user has permission to mark started
+                if (user && !canPerformAction(user.role, 'canEdit')) {
+                  Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
+                  return;
+                }
+                handleToggleActivityStarted(activity.id);
+              }}
+              style={[styles.startedButton, activity.isStarted && styles.startedButtonActive]}
+            >
+              <Text style={[styles.startedButtonText, activity.isStarted && styles.startedButtonTextActive]}>
+                Mark as started
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity 
               onPress={() => {
                 // Check if user has permission to delete activities
@@ -635,7 +710,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   // Memoize activity rows to ensure they update when timechart changes
-  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity]);
+  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.nonWorkingDays, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity]);
 
   return (
     <View style={styles.container}>
@@ -664,14 +739,14 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
           ]}
           onPress={() => {
             if (user && !canPerformAction(user.role, 'canAddHoliday')) {
-              Alert.alert('Permission Denied', 'You do not have permission to add holidays.');
+              Alert.alert('Permission Denied', 'You do not have permission to add non-working days.');
               return;
             }
             setShowAddHolidayModal(true);
           }}
           disabled={user ? !canPerformAction(user.role, 'canAddHoliday') : false}
         >
-          <Text style={styles.controlButtonText}>+ Holiday</Text>
+          <Text style={styles.controlButtonText}>+ Non-Working Day</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -756,7 +831,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <View style={styles.legendContent}>
               <View style={styles.legendItem}>
                 <View style={[styles.legendBox, { backgroundColor: '#FFE0E0' }]} />
-                <Text style={styles.legendText}>Holiday</Text>
+                <Text style={styles.legendText}>Non-Working Day</Text>
               </View>
               <View style={styles.legendItem}>
                 <View style={[styles.legendBox, { backgroundColor: '#F0F0F0' }]} />
@@ -915,7 +990,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         </View>
       </Modal>
 
-      {/* Add Holiday Modal */}
+      {/* Add Non-Working Day Modal */}
       <Modal
         visible={showAddHolidayModal}
         transparent
@@ -928,7 +1003,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               <TouchableOpacity onPress={() => setShowAddHolidayModal(false)}>
                 <Text style={styles.closeButton}>← Back</Text>
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>Add Holiday</Text>
+              <Text style={styles.modalTitle}>Add Non-Working Day</Text>
               <TouchableOpacity onPress={handleAddHoliday}>
                 <Text style={styles.doneButton}>Done</Text>
               </TouchableOpacity>
@@ -936,7 +1011,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
             <ScrollView style={styles.formContainer}>
               <View style={styles.formSection}>
-                <Text style={styles.label}>Holiday Name *</Text>
+                <Text style={styles.label}>Non-Working Day Name *</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., Christmas, New Year"
@@ -1018,26 +1093,29 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             </View>
 
             <ScrollView style={styles.formContainer}>
-              <Text style={styles.sectionHeading}>Holidays ({timechart.publicHolidays.length})</Text>
-              {timechart.publicHolidays.length === 0 ? (
-                <Text style={styles.emptyText}>No holidays added</Text>
+              <Text style={styles.sectionHeading}>Non-Working Days ({(timechart.nonWorkingDays || timechart.publicHolidays || []).length})</Text>
+              {(timechart.nonWorkingDays || timechart.publicHolidays || []).length === 0 ? (
+                <Text style={styles.emptyText}>No non-working days added</Text>
               ) : (
-                timechart.publicHolidays.map((holiday) => (
-                  <View key={holiday.id} style={styles.manageItem}>
+                (timechart.nonWorkingDays || timechart.publicHolidays || []).map((day) => (
+                  <View key={day.id} style={styles.manageItem}>
                     <View>
-                      <Text style={styles.manageItemName}>{holiday.name}</Text>
+                      <Text style={styles.manageItemName}>{day.name}</Text>
                       <Text style={styles.manageItemDate}>
-                        {new Date(holiday.date).toLocaleDateString()}
+                        {new Date(day.date).toLocaleDateString()}
                       </Text>
                     </View>
                     <TouchableOpacity 
                       onPress={() => {
-                        // Check if user has permission to delete holidays
+                        // Check if user has permission to delete non-working days
                         if (user && !canPerformAction(user.role, 'canDeleteHoliday')) {
-                          Alert.alert('Permission Denied', 'You do not have permission to delete holidays.');
+                          Alert.alert('Permission Denied', 'You do not have permission to delete non-working days.');
                           return;
                         }
-                        onRemoveHoliday(holiday.id);
+                        const removeFunction = onRemoveNonWorkingDay || onRemoveHoliday;
+                        if (removeFunction) {
+                          removeFunction(day.id);
+                        }
                       }}
                     >
                       <Text style={styles.removeButton}>✕</Text>
@@ -1415,6 +1493,11 @@ const styles = StyleSheet.create({
     color: '#333',
     lineHeight: 16,
   },
+  completedActivityCellText: {
+    textDecorationLine: 'line-through',
+    opacity: 0.6,
+    color: '#999',
+  },
   contractorCell: {
     backgroundColor: '#F5F5F5',
     justifyContent: 'center',
@@ -1449,6 +1532,38 @@ const styles = StyleSheet.create({
     color: '#FF4444',
     fontWeight: 'bold',
   },
+  completeActivityText: {
+    fontSize: 16,
+    color: '#999',
+    fontWeight: 'bold',
+    marginRight: 4,
+  },
+  completeActivityTextActive: {
+    color: '#4CAF50',
+  },
+  startedButton: {
+    backgroundColor: '#F0F0F0',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#DDD',
+    marginHorizontal: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  startedButtonActive: {
+    backgroundColor: '#4CAF50',
+    borderColor: '#2E8B57',
+  },
+  startedButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#666',
+  },
+  startedButtonTextActive: {
+    color: '#FFF',
+  },
   dateCell: {
     backgroundColor: '#FFF',
     justifyContent: 'center',
@@ -1474,6 +1589,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 1,
     elevation: 1,
+  },
+  completedActivityIndicator: {
+    opacity: 0.5,
+    backgroundColor: '#CCCCCC',
   },
   legendRow: {
     flexDirection: 'row',

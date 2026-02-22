@@ -7,7 +7,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { TimeChartData } from '../types';
-import { getDaysBetween, getMonthsInRange, isPublicHoliday } from '../utils/dateUtils';
+import { getDaysBetween, getMonthsInRange, isPublicHoliday, isNonWorkingDay } from '../utils/dateUtils';
 
 interface TimeChartViewProps {
   timechart: TimeChartData;
@@ -34,7 +34,7 @@ export const TimeChartView: React.FC<TimeChartViewProps> = ({ timechart }) => {
       const currentDate = new Date(timechart.startDate);
       currentDate.setDate(currentDate.getDate() + i);
 
-      const isHoliday = isPublicHoliday(currentDate, timechart.publicHolidays);
+      const isHoliday = isNonWorkingDay(currentDate, timechart.nonWorkingDays || timechart.publicHolidays || []);
       const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
       const dayOfMonth = currentDate.getDate();
       const dayName = currentDate.toLocaleString('en-US', { weekday: 'short' });
@@ -161,11 +161,11 @@ export const TimeChartView: React.FC<TimeChartViewProps> = ({ timechart }) => {
       const currentDate = new Date(timechart.startDate);
       currentDate.setDate(currentDate.getDate() + i);
 
-      const isHoliday = isPublicHoliday(currentDate, timechart.publicHolidays);
+      const isHoliday = isNonWorkingDay(currentDate, timechart.nonWorkingDays || timechart.publicHolidays || []);
       const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
       const isActivityDay = i >= startDay && i < endDay;
       
-      // Activity should NOT show on holidays or weekends
+      // Activity should NOT show on non-working days or weekends
       const shouldShowActivity = isActivityDay && !isHoliday && !isWeekend;
 
       let backgroundColor = '#FFF';
@@ -250,7 +250,7 @@ export const TimeChartView: React.FC<TimeChartViewProps> = ({ timechart }) => {
             <View style={styles.legendContent}>
               <View style={styles.legendItem}>
                 <View style={[styles.legendBox, { backgroundColor: '#FFE0E0' }]} />
-                <Text style={styles.legendText}>Holiday</Text>
+                <Text style={styles.legendText}>Non-Working Day</Text>
               </View>
               <View style={styles.legendItem}>
                 <View style={[styles.legendBox, { backgroundColor: '#F0F0F0' }]} />

@@ -44,17 +44,18 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
 
   const handleAddHoliday = (holiday: any) => {
     if (!timechart) return;
-    const exists = timechart.publicHolidays.some(
+    const nonWorkingDays = timechart.nonWorkingDays || [];
+    const exists = nonWorkingDays.some(
       h => new Date(h.date).toDateString() === new Date(holiday.date).toDateString()
     );
     if (exists) {
-      Alert.alert('Error', 'Holiday already exists on this date');
+      Alert.alert('Error', 'Non-working day already exists on this date');
       return;
     }
     setTimechart({
       ...timechart,
-      publicHolidays: [
-        ...timechart.publicHolidays,
+      nonWorkingDays: [
+        ...nonWorkingDays,
         { ...holiday, id: Math.random().toString(36).substr(2, 9) }
       ],
     });
@@ -64,7 +65,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
     if (!timechart) return;
     setTimechart({
       ...timechart,
-      publicHolidays: timechart.publicHolidays.filter(h => h.id !== id),
+      nonWorkingDays: (timechart.nonWorkingDays || []).filter(h => h.id !== id),
     });
   };
 
@@ -75,9 +76,6 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
       Alert.alert('Error', 'Subcontractor already exists');
       return;
     }
-    const colors = [
-      '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
-    ];
     setTimechart({
       ...timechart,
       subcontractors: [
@@ -85,7 +83,6 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
         {
           id: Math.random().toString(36).substr(2, 9),
           name,
-          color: colors[timechart.subcontractors.length % colors.length],
           isActive: true,
         },
       ],
@@ -134,6 +131,72 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
     });
   };
 
+  const handleAddFloorLevel = (floorLevel: any) => {
+    if (!timechart) return;
+    setTimechart({
+      ...timechart,
+      floorLevels: [
+        ...timechart.floorLevels,
+        {
+          ...floorLevel,
+          id: Math.random().toString(36).substr(2, 9),
+        },
+      ],
+    });
+  };
+
+  const handleUpdateFloorLevel = (id: string, updatedFloorLevel: any) => {
+    if (!timechart) return;
+    setTimechart({
+      ...timechart,
+      floorLevels: timechart.floorLevels.map(f =>
+        f.id === id ? { ...f, ...updatedFloorLevel } : f
+      ),
+    });
+  };
+
+  const handleRemoveFloorLevel = (id: string) => {
+    if (!timechart) return;
+    setTimechart({
+      ...timechart,
+      floorLevels: timechart.floorLevels.filter(f => f.id !== id),
+    });
+  };
+
+  const handleAddOrUpdateDailyLog = (log: any) => {
+    if (!timechart) return;
+    const existingIndex = timechart.dailyActivityLogs.findIndex(
+      l => l.date === log.date
+    );
+    if (existingIndex >= 0) {
+      const updatedLogs = [...timechart.dailyActivityLogs];
+      updatedLogs[existingIndex] = { ...updatedLogs[existingIndex], ...log };
+      setTimechart({
+        ...timechart,
+        dailyActivityLogs: updatedLogs,
+      });
+    } else {
+      setTimechart({
+        ...timechart,
+        dailyActivityLogs: [
+          ...timechart.dailyActivityLogs,
+          {
+            ...log,
+            id: Math.random().toString(36).substr(2, 9),
+          },
+        ],
+      });
+    }
+  };
+
+  const handleRemoveDailyLog = (id: string) => {
+    if (!timechart) return;
+    setTimechart({
+      ...timechart,
+      dailyActivityLogs: timechart.dailyActivityLogs.filter(l => l.id !== id),
+    });
+  };
+
   if (loading) {
     return (
       <View style={styles.centerContainer}>
@@ -170,12 +233,18 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
 
       <UnifiedTimeChartEditor
         timechart={timechart}
-        onAddHoliday={handleAddHoliday}
-        onRemoveHoliday={handleRemoveHoliday}
+        onAddNonWorkingDay={handleAddHoliday}
+        onRemoveNonWorkingDay={handleRemoveHoliday}
         onAddSubcontractor={handleAddSubcontractor}
         onRemoveSubcontractor={handleRemoveSubcontractor}
         onAddActivity={handleAddActivity}
+        onUpdateActivity={handleUpdateActivity}
         onRemoveActivity={handleRemoveActivity}
+        onAddFloorLevel={handleAddFloorLevel}
+        onUpdateFloorLevel={handleUpdateFloorLevel}
+        onRemoveFloorLevel={handleRemoveFloorLevel}
+        onAddOrUpdateDailyLog={handleAddOrUpdateDailyLog}
+        onRemoveDailyLog={handleRemoveDailyLog}
       />
     </View>
   );

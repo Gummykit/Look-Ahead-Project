@@ -5,8 +5,8 @@ import { UserRole, RolePermissions } from '@/types';
  * 
  * Three user roles with different permissions:
  * - Contractor: Full edit access (edit, add, delete projects)
- * - Architect: Full edit access (can review and modify timecharts)
- * - Builder: View-only access (can only view timechart, cannot edit)
+ * - Sub-contractor: Full edit access (can review and modify timecharts)
+ * - Observer: View-only access (can only view timechart, cannot edit)
  */
 
 export const rolePermissions: Record<UserRole, RolePermissions> = {
@@ -23,7 +23,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canViewTimechart: true,
     canLogDailyActivity: true,
   },
-  architect: {
+  'sub-contractor': {
     canEdit: true,
     canDelete: true,
     canAddActivity: true,
@@ -36,7 +36,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canViewTimechart: true,
     canLogDailyActivity: true,
   },
-  builder: {
+  observer: {
     canEdit: false,
     canDelete: false,
     canAddActivity: false,
@@ -47,7 +47,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canAddSubcontractor: false,
     canDeleteSubcontractor: false,
     canViewTimechart: true,
-    canLogDailyActivity: true, // Builders can log daily progress
+    canLogDailyActivity: true, // Observers can log daily progress
   },
 };
 
@@ -72,8 +72,8 @@ export function canPerformAction(role: UserRole, action: keyof RolePermissions):
 export function getRoleDisplayName(role: UserRole): string {
   const roleNames: Record<UserRole, string> = {
     contractor: 'Contractor',
-    architect: 'Architect',
-    builder: 'Builder',
+    'sub-contractor': 'Sub-contractor',
+    observer: 'Observer',
   };
   return roleNames[role];
 }
@@ -84,8 +84,8 @@ export function getRoleDisplayName(role: UserRole): string {
 export function getRoleDescription(role: UserRole): string {
   const descriptions: Record<UserRole, string> = {
     contractor: 'Full access to create, edit, and delete projects',
-    architect: 'Full access to manage project timecharts',
-    builder: 'View-only access to view project timecharts',
+    'sub-contractor': 'Full access to manage project timecharts',
+    observer: 'View-only access to view project timecharts',
   };
   return descriptions[role];
 }
@@ -94,5 +94,5 @@ export function getRoleDescription(role: UserRole): string {
  * Get all available roles
  */
 export function getAllRoles(): UserRole[] {
-  return ['contractor', 'architect', 'builder'];
+  return ['contractor', 'sub-contractor', 'observer'];
 }

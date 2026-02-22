@@ -1,11 +1,14 @@
 // Type definitions for the Construction Timechart App
 
-export interface PublicHoliday {
+export interface NonWorkingDay {
   id: string;
   date: Date;
   name: string;
   color?: string;
 }
+
+// Maintain backward compatibility
+export type PublicHoliday = NonWorkingDay;
 
 export interface Subcontractor {
   id: string;
@@ -33,6 +36,8 @@ export interface Activity {
   floorLevelColor: string;
   description?: string;
   sequenceOrder: number;
+  isStarted?: boolean; // Marks activity as started with a small green tick
+  isCompleted?: boolean; // Marks activity as complete with strikethrough
 }
 
 export interface DailyActivityLog {
@@ -53,7 +58,8 @@ export interface TimeChartData {
   projectLocation: string;
   startDate: Date;
   endDate: Date;
-  publicHolidays: PublicHoliday[];
+  nonWorkingDays: NonWorkingDay[];
+  publicHolidays?: PublicHoliday[]; // Deprecated, kept for backward compatibility
   subcontractors: Subcontractor[];
   floorLevels: FloorLevel[];
   activities: Activity[];
@@ -70,7 +76,7 @@ export interface ActivityDetailModalData {
 
 // ============ USER & AUTHENTICATION TYPES ============
 
-export type UserRole = 'contractor' | 'architect' | 'builder';
+export type UserRole = 'contractor' | 'sub-contractor' | 'observer';
 
 export interface User {
   id: string;

@@ -45,11 +45,11 @@ export default function LoginScreen() {
     } catch (error: any) {
       console.log('🟣 [Login] Login failed:', error.message);
       // Check if the username matches a known account but wrong role was selected
-      const knownUsernames = ['contractor1', 'architect1', 'builder1'];
+      const knownUsernames = ['contractor1', 'subcontractor1', 'observer1'];
       if (knownUsernames.includes(username.trim())) {
         Alert.alert(
           'Login Failed',
-          'Invalid credentials or role mismatch.\n\nMake sure:\n1. Username is correct\n2. Password is correct (e.g., contractor123)\n3. Role matches the account\n\nDemo accounts:\n• contractor1 → Contractor role\n• architect1 → Architect role\n• builder1 → Builder role'
+          'Invalid credentials or role mismatch.\n\nMake sure:\n1. Username is correct\n2. Password is correct (e.g., contractor123)\n3. Role matches the account\n\nDemo accounts:\n• contractor1 → Contractor role\n• subcontractor1 → Sub-contractor role\n• observer1 → Observer role'
         );
       } else {
         Alert.alert('Login Failed', error.message || 'An error occurred during login');
@@ -65,10 +65,10 @@ export default function LoginScreen() {
     // Auto-select role if user types a known demo account username
     if (text === 'contractor1') {
       setSelectedRole('contractor');
-    } else if (text === 'architect1') {
-      setSelectedRole('architect');
-    } else if (text === 'builder1') {
-      setSelectedRole('builder');
+    } else if (text === 'subcontractor1') {
+      setSelectedRole('sub-contractor');
+    } else if (text === 'observer1') {
+      setSelectedRole('observer');
     }
   };
 
@@ -218,8 +218,8 @@ export default function LoginScreen() {
               <View style={styles.demoInfo}>
                 <Text style={styles.demoTitle}>Demo Credentials:</Text>
                 <Text style={styles.demoText}>👷 Contractor: contractor1 / contractor123</Text>
-                <Text style={styles.demoText}>🏗️ Architect: architect1 / architect123</Text>
-                <Text style={styles.demoText}>👨‍🔧 Builder: builder1 / builder123</Text>
+                <Text style={styles.demoText}>🏗️ Sub-contractor: subcontractor1 / subcontractor123</Text>
+                <Text style={styles.demoText}>�️ Observer: observer1 / observer123</Text>
               </View>
             )}
 
