@@ -17,7 +17,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { TimeChartData, Activity, User } from '../types';
-import { getDaysBetween, isPublicHoliday, isNonWorkingDay } from '../utils/dateUtils';
+import { getDaysBetween, getSignedDaysBetween, isPublicHoliday, isNonWorkingDay } from '../utils/dateUtils';
 import { canPerformAction } from '../utils/rolePermissions';
 
 interface UnifiedTimeChartEditorProps {
@@ -90,6 +90,11 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   );
 
   const [contractorName, setContractorName] = useState('');
+  
+  // Child activity state
+  const [hasChildActivity, setHasChildActivity] = useState(false);
+  const [childActivityName, setChildActivityName] = useState('');
+  const [childActivityDuration, setChildActivityDuration] = useState('1');
   
   // Floor level management state
   const [floorLevelName, setFloorLevelName] = useState('');
@@ -221,6 +226,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       floorLevelId: selectedFloorLevel,
       floorLevelName: floorLevel.name,
       floorLevelColor: floorLevel.color,
+      childActivityIds: [],
+      childDuration: hasChildActivity ? parseInt(childActivityDuration) || 1 : undefined,
+      childActivityName: hasChildActivity ? childActivityName.trim() : undefined,
     });
 
     setActivityName('');
@@ -231,6 +239,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     );
     setSelectedSubcontractor(timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
+    setHasChildActivity(false);
+    setChildActivityName('');
+    setChildActivityDuration('1');
     setShowAddActivityModal(false);
   };
 
@@ -340,12 +351,67 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    // Call the update handler
-    onUpdateActivity(draggingActivityId, {
-      startDate: dragActivity.startDate,
-      endDate: dragActivity.endDate,
-      duration: getDaysBetween(dragActivity.startDate, dragActivity.endDate),
+    // Find the activity in the timechart to check if it has children
+    const activity = timechart.activities.find(a => a.id === draggingActivityId);
+    const childActivityIds = activity?.childActivityIds || [];
+    
+    // Calculate the offset (days moved) BEFORE updating parent
+    // Use getSignedDaysBetween to handle both forward and backward movement correctly
+    let offset = 0;
+    if (activity && childActivityIds.length > 0) {
+      offset = getSignedDaysBetween(activity.startDate, dragActivity.startDate);
+      console.log('🔵 [Drag] Parent offset calculation:', {
+        originalStartDate: activity.startDate,
+        dragActivityStartDate: dragActivity.startDate,
+        offset: offset,
+      });
+    }
+    
+    console.log('🔵 [Drag] Updating parent activity:', {
+      id: draggingActivityId,
+      newStartDate: dragActivity.startDate,
+      newEndDate: dragActivity.endDate,
     });
+    
+    // IMPORTANT: For parent activities with children, we need to update ALL at once
+    // to avoid stale state issues. We'll do this by calling handleUpdateActivityWithChildren
+    if (childActivityIds.length > 0) {
+      // This is a parent with children - update all together
+      const childUpdatesData = childActivityIds.map((childId) => {
+        const childActivity = timechart.activities.find(a => a.id === childId);
+        if (childActivity) {
+          const newChildStartDate = new Date(childActivity.startDate);
+          newChildStartDate.setDate(newChildStartDate.getDate() + offset);
+          const newChildEndDate = new Date(childActivity.endDate);
+          newChildEndDate.setDate(newChildEndDate.getDate() + offset);
+          
+          return {
+            childId: childId,
+            updates: {
+              startDate: newChildStartDate,
+              endDate: newChildEndDate,
+              duration: childActivity.duration,
+            }
+          };
+        }
+        return null;
+      }).filter(Boolean) as any[];
+
+      // Call a special update method that handles parent + children together
+      onUpdateActivity(draggingActivityId, {
+        startDate: dragActivity.startDate,
+        endDate: dragActivity.endDate,
+        duration: getDaysBetween(dragActivity.startDate, dragActivity.endDate),
+        childUpdates: childUpdatesData, // Pass child updates as part of parent update
+      });
+    } else {
+      // Regular activity without children - update normally
+      onUpdateActivity(draggingActivityId, {
+        startDate: dragActivity.startDate,
+        endDate: dragActivity.endDate,
+        duration: getDaysBetween(dragActivity.startDate, dragActivity.endDate),
+      });
+    }
 
     setDraggingActivityId(null);
     setDragActivity(null);
@@ -628,85 +694,171 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   const renderActivityRows = () => {
-    return timechart.activities.map((activity) => {
-      const activityStartDay = getDaysBetween(timechart.startDate, activity.startDate);
-      const contractorName = timechart.subcontractors.find(
-        c => c.id === activity.subcontractorId
-      )?.name || 'Unassigned';
+    return timechart.activities
+      .filter(activity => !activity.parentActivityId) // Only render parent activities
+      .map((activity) => {
+        const activityStartDay = getDaysBetween(timechart.startDate, activity.startDate);
+        const contractorName = timechart.subcontractors.find(
+          c => c.id === activity.subcontractorId
+        )?.name || 'Unassigned';
 
-      return (
-        <View key={`activity-${activity.id}`} style={styles.activityRowContainer}>
-          <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
-            <Text 
-              style={[
-                styles.activityCellText,
-                activity.isCompleted && styles.completedActivityCellText
-              ]} 
-              numberOfLines={2}
-            >
-              {activity.name}
-            </Text>
-          </View>
+        // Get child activities for this parent
+        const childActivities = activity.childActivityIds 
+          ? timechart.activities.filter(a => activity.childActivityIds?.includes(a.id))
+          : [];
 
-          <View style={[styles.cell, styles.contractorCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
-            <View
-              style={[
-                styles.contractorColorDot,
-                { backgroundColor: activity.floorLevelColor },
-              ]}
-            />
-            <Text style={styles.contractorCellText} numberOfLines={1}>
-              {contractorName}
-            </Text>
-            <TouchableOpacity 
-              onPress={() => {
-                // Check if user has permission to mark complete
-                if (user && !canPerformAction(user.role, 'canEdit')) {
-                  Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
-                  return;
-                }
-                handleToggleActivityCompletion(activity.id);
-              }}
-            >
-              <Text style={[styles.completeActivityText, activity.isCompleted && styles.completeActivityTextActive]}>
-                ✓
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              onPress={() => {
-                // Check if user has permission to mark started
-                if (user && !canPerformAction(user.role, 'canEdit')) {
-                  Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
-                  return;
-                }
-                handleToggleActivityStarted(activity.id);
-              }}
-              style={[styles.startedButton, activity.isStarted && styles.startedButtonActive]}
-            >
-              <Text style={[styles.startedButtonText, activity.isStarted && styles.startedButtonTextActive]}>
-                Mark as started
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              onPress={() => {
-                // Check if user has permission to delete activities
-                if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
-                  Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
-                  return;
-                }
-                onRemoveActivity(activity.id);
-              }}
-            >
-              <Text style={styles.removeActivityText}>✕</Text>
-            </TouchableOpacity>
-          </View>
+        return (
+          <View key={`activity-${activity.id}`}>
+            {/* Parent Activity Row */}
+            <View style={styles.activityRowContainer}>
+              <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
+                <Text 
+                  style={[
+                    styles.activityCellText,
+                    activity.isCompleted && styles.completedActivityCellText
+                  ]} 
+                  numberOfLines={2}
+                >
+                  {activity.name}
+                </Text>
+              </View>
 
-          <View style={styles.chartArea}>
-            {renderDateCells(activity, activityStartDay)}
+              <View style={[styles.cell, styles.contractorCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
+                <View
+                  style={[
+                    styles.contractorColorDot,
+                    { backgroundColor: activity.floorLevelColor },
+                  ]}
+                />
+                <Text style={styles.contractorCellText} numberOfLines={1}>
+                  {contractorName}
+                </Text>
+                <TouchableOpacity 
+                  onPress={() => {
+                    // Check if user has permission to mark complete
+                    if (user && !canPerformAction(user.role, 'canEdit')) {
+                      Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
+                      return;
+                    }
+                    handleToggleActivityCompletion(activity.id);
+                  }}
+                >
+                  <Text style={[styles.completeActivityText, activity.isCompleted && styles.completeActivityTextActive]}>
+                    ✓
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  onPress={() => {
+                    // Check if user has permission to mark started
+                    if (user && !canPerformAction(user.role, 'canEdit')) {
+                      Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
+                      return;
+                    }
+                    handleToggleActivityStarted(activity.id);
+                  }}
+                  style={[styles.startedButton, activity.isStarted && styles.startedButtonActive]}
+                >
+                  <Text style={[styles.startedButtonText, activity.isStarted && styles.startedButtonTextActive]}>
+                    Mark as started
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  onPress={() => {
+                    // Check if user has permission to delete activities
+                    if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
+                      Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
+                      return;
+                    }
+                    onRemoveActivity(activity.id);
+                  }}
+                >
+                  <Text style={styles.removeActivityText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.chartArea}>
+                {renderDateCells(activity, activityStartDay)}
+              </View>
+            </View>
+
+            {/* Child Activity Rows */}
+            {childActivities.map((childActivity) => {
+              const childStartDay = getDaysBetween(timechart.startDate, childActivity.startDate);
+              return (
+                <View key={`activity-${childActivity.id}`} style={[styles.activityRowContainer, styles.childActivityRow]}>
+                  <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
+                    <Text 
+                      style={[
+                        styles.activityCellText,
+                        styles.childActivityCellText,
+                        childActivity.isCompleted && styles.completedActivityCellText
+                      ]} 
+                      numberOfLines={2}
+                    >
+                      ↳ {childActivity.name}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.cell, styles.contractorCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
+                    <View
+                      style={[
+                        styles.contractorColorDot,
+                        { backgroundColor: childActivity.floorLevelColor, opacity: 0.6 },
+                      ]}
+                    />
+                    <Text style={styles.contractorCellText} numberOfLines={1}>
+                      {contractorName}
+                    </Text>
+                    <TouchableOpacity 
+                      onPress={() => {
+                        if (user && !canPerformAction(user.role, 'canEdit')) {
+                          Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
+                          return;
+                        }
+                        handleToggleActivityCompletion(childActivity.id);
+                      }}
+                    >
+                      <Text style={[styles.completeActivityText, childActivity.isCompleted && styles.completeActivityTextActive]}>
+                        ✓
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => {
+                        if (user && !canPerformAction(user.role, 'canEdit')) {
+                          Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
+                          return;
+                        }
+                        handleToggleActivityStarted(childActivity.id);
+                      }}
+                      style={[styles.startedButton, childActivity.isStarted && styles.startedButtonActive]}
+                    >
+                      <Text style={[styles.startedButtonText, childActivity.isStarted && styles.startedButtonTextActive]}>
+                        Mark as started
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => {
+                        if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
+                          Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
+                          return;
+                        }
+                        // Delete both parent and child activities
+                        onRemoveActivity(activity.id);
+                      }}
+                    >
+                      <Text style={styles.removeActivityText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.chartArea}>
+                    {renderDateCells(childActivity, childStartDay)}
+                  </View>
+                </View>
+              );
+            })}
           </View>
-        </View>
-      );
-    });
+        );
+      });
   };
 
   // Memoize activity rows to ensure they update when timechart changes
@@ -837,6 +989,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 <View style={[styles.legendBox, { backgroundColor: '#F0F0F0' }]} />
                 <Text style={styles.legendText}>Weekend</Text>
               </View>
+              
+              {/* Floor Level Colors */}
+              {timechart.floorLevels && timechart.floorLevels.length > 0 && (
+                <>
+                  {timechart.floorLevels.map((floorLevel) => (
+                    <View key={`legend-floor-${floorLevel.id}`} style={styles.legendItem}>
+                      <View style={[styles.legendBox, { backgroundColor: floorLevel.color }]} />
+                      <Text style={styles.legendText}>{floorLevel.name}</Text>
+                    </View>
+                  ))}
+                </>
+              )}
             </View>
           </View>
 
@@ -984,7 +1148,50 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     ))
                   )}
                 </View>
-              </View>              <View style={styles.divider} />
+              </View>
+
+              {/* Child Activity Section */}
+              <View style={styles.formSection}>
+                <View style={styles.childActivityToggleContainer}>
+                  <TouchableOpacity
+                    style={[styles.checkboxSquare, hasChildActivity && styles.checkboxSquareChecked]}
+                    onPress={() => setHasChildActivity(!hasChildActivity)}
+                  >
+                    {hasChildActivity && <Text style={styles.checkboxCheckmark}>✓</Text>}
+                  </TouchableOpacity>
+                  <Text style={styles.label}>Add Child Activity (Optional)</Text>
+                </View>
+              </View>
+
+              {hasChildActivity && (
+                <>
+                  <View style={styles.formSection}>
+                    <Text style={styles.label}>Child Activity Name *</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g., Inspection, Finishing"
+                      placeholderTextColor="#999"
+                      value={childActivityName}
+                      onChangeText={setChildActivityName}
+                    />
+                    <Text style={styles.helperText}>Child activity will start immediately after parent activity ends</Text>
+                  </View>
+
+                  <View style={styles.formSection}>
+                    <Text style={styles.label}>Child Activity Duration (days) *</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g., 3"
+                      placeholderTextColor="#999"
+                      value={childActivityDuration}
+                      onChangeText={setChildActivityDuration}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                </>
+              )}
+
+              <View style={styles.divider} />
             </ScrollView>
           </View>
         </View>
@@ -1936,5 +2143,43 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: '#4CAF50',
+  },
+  // Child Activity Styles
+  childActivityToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  checkboxSquare: {
+    width: 20,
+    height: 20,
+    borderWidth: 2,
+    borderColor: '#0066CC',
+    borderRadius: 4,
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+  },
+  checkboxSquareChecked: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  checkboxCheckmark: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  // Child Activity Styles
+  childActivityRow: {
+    backgroundColor: '#FAFAFA',
+    borderLeftWidth: 3,
+    borderLeftColor: '#0066CC',
+  },
+  childActivityCellText: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#555',
+    paddingLeft: 8,
   },
 });

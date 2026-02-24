@@ -11,6 +11,18 @@ export const getDaysBetween = (startDate: Date, endDate: Date): number => {
   return diffDays;
 };
 
+// Calculate signed days between two dates (positive if endDate > startDate, negative if endDate < startDate)
+export const getSignedDaysBetween = (startDate: Date, endDate: Date): number => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  // Reset time to midnight to avoid timezone issues
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  const diffTime = end.getTime() - start.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+};
+
 export const isPublicHoliday = (date: Date, holidays: { date: Date }[]): boolean => {
   if (!holidays || holidays.length === 0) return false;
   

@@ -100,16 +100,41 @@ export default function EditorScreen() {
 
   const handleAddActivity = (activity: any) => {
     if (!timechart) return;
+    
+    const parentActivityId = Math.random().toString(36).substr(2, 9);
+    const newActivities = [
+      ...timechart.activities,
+      {
+        ...activity,
+        id: parentActivityId,
+        sequenceOrder: timechart.activities.length + 1,
+        childActivityIds: activity.childDuration ? [Math.random().toString(36).substr(2, 9)] : [],
+      },
+    ];
+    
+    // If child activity requested, create it
+    if (activity.childDuration && activity.childActivityName) {
+      const childActivityId = newActivities[newActivities.length - 1].childActivityIds?.[0];
+      const childStartDate = new Date(activity.endDate);
+      childStartDate.setDate(childStartDate.getDate() + 1); // Start day after parent ends
+      const childEndDate = new Date(childStartDate);
+      childEndDate.setDate(childEndDate.getDate() + (activity.childDuration - 1));
+      
+      newActivities.push({
+        ...activity,
+        id: childActivityId,
+        name: activity.childActivityName,
+        startDate: childStartDate,
+        endDate: childEndDate,
+        duration: activity.childDuration,
+        parentActivityId: parentActivityId,
+        sequenceOrder: newActivities.length + 1,
+      });
+    }
+    
     setTimechart({
       ...timechart,
-      activities: [
-        ...timechart.activities,
-        {
-          ...activity,
-          id: Math.random().toString(36).substr(2, 9),
-          sequenceOrder: timechart.activities.length + 1,
-        },
-      ],
+      activities: newActivities,
     });
   };
 
@@ -119,6 +144,15 @@ export default function EditorScreen() {
     // Find the original activity to compare dates
     const originalActivity = timechart.activities.find(a => a.id === id);
     if (!originalActivity) return;
+
+    console.log('🟢 [Update] Activity update received:', {
+      id: id,
+      originalStartDate: originalActivity.startDate,
+      newStartDate: updatedActivity.startDate,
+      isParent: !originalActivity.parentActivityId,
+      childActivityIds: originalActivity.childActivityIds,
+      hasChildUpdates: !!updatedActivity.childUpdates,
+    });
 
     // Normalize dates for comparison (remove time component, use UTC)
     const normalizeDate = (date: Date | string) => {
@@ -132,15 +166,93 @@ export default function EditorScreen() {
     const endDateChanged = updatedActivity.endDate && 
       normalizeDate(updatedActivity.endDate) !== normalizeDate(originalActivity.endDate);
 
-    console.log('🟡 [Daily Logs] startDateChanged:', startDateChanged, 'endDateChanged:', endDateChanged);
-    console.log('🟡 [Daily Logs] Old start:', normalizeDate(originalActivity.startDate), 'New start:', normalizeDate(updatedActivity.startDate));
+    console.log('� [Update] Date changes detected:', {
+      startDateChanged: startDateChanged,
+      endDateChanged: endDateChanged,
+      oldStart: normalizeDate(originalActivity.startDate),
+      newStart: normalizeDate(updatedActivity.startDate),
+    });
+
+    // If childUpdates are included, use them directly (they're already calculated in the component)
+    // Otherwise, calculate child updates if this is a parent (for non-drag updates)
+    let childUpdates: any[] = [];
+    if (updatedActivity.childUpdates) {
+      // Use the child updates passed from the drag handler
+      childUpdates = updatedActivity.childUpdates;
+      console.log('🟢 [Update] Using passed childUpdates:', childUpdates.length);
+    } else if ((startDateChanged || endDateChanged) && originalActivity.childActivityIds && originalActivity.childActivityIds.length > 0) {
+      // Calculate child offsets only for non-drag updates
+      const oldStart = new Date(originalActivity.startDate);
+      const newStart = new Date(updatedActivity.startDate);
+      
+      oldStart.setUTCHours(0, 0, 0, 0);
+      newStart.setUTCHours(0, 0, 0, 0);
+      
+      const daysDifference = Math.round(
+        (newStart.getTime() - oldStart.getTime()) / (1000 * 60 * 60 * 24)
+      );
+
+      console.log('🟢 [Update] Parent moved, calculating child offsets:', {
+        daysDifference: daysDifference,
+        childCount: originalActivity.childActivityIds.length,
+      });
+
+      // Update all child activities by the same offset
+      originalActivity.childActivityIds.forEach((childId) => {
+        const childActivity = timechart.activities.find(a => a.id === childId);
+        if (childActivity) {
+          const newChildStartDate = new Date(childActivity.startDate);
+          newChildStartDate.setDate(newChildStartDate.getDate() + daysDifference);
+          const newChildEndDate = new Date(childActivity.endDate);
+          newChildEndDate.setDate(newChildEndDate.getDate() + daysDifference);
+          
+          childUpdates.push({
+            childId: childId,
+            updates: {
+              startDate: newChildStartDate,
+              endDate: newChildEndDate,
+              duration: childActivity.duration,
+            }
+          });
+        }
+      });
+    }
+
+    // Create the updated activity object (without childUpdates property)
+    const { childUpdates: _, ...activityToUpdate } = updatedActivity;
 
     let updatedTimechart = {
       ...timechart,
-      activities: timechart.activities.map(a =>
-        a.id === id ? { ...a, ...updatedActivity } : a
-      ),
+      activities: timechart.activities.map(a => {
+        if (a.id === id) {
+          const updated = { ...a, ...activityToUpdate };
+          console.log('🟢 [Update] Activity map - parent updated:', {
+            id: id,
+            oldStart: a.startDate,
+            newStart: updated.startDate,
+          });
+          return updated;
+        }
+        // Also apply child updates if any
+        const childUpdate = childUpdates.find((cu: any) => cu.childId === a.id);
+        if (childUpdate) {
+          const updated = { ...a, ...childUpdate.updates };
+          console.log('🟢 [Update] Activity map - child updated:', {
+            id: a.id,
+            oldStart: a.startDate,
+            newStart: updated.startDate,
+          });
+          return updated;
+        }
+        return a;
+      }),
     };
+
+    console.log('🟢 [Update] Updated timechart activities:', updatedTimechart.activities.map(a => ({
+      id: a.id,
+      name: a.name,
+      startDate: a.startDate,
+    })));
 
     // If dates changed, migrate daily activity logs to new dates
     if ((startDateChanged || endDateChanged) && timechart.dailyActivityLogs.length > 0) {
@@ -192,14 +304,22 @@ export default function EditorScreen() {
       }
     }
 
+    console.log('🟢 [Update] Calling setTimechart with updated activities');
     setTimechart(updatedTimechart);
   };
 
   const handleRemoveActivity = (id: string) => {
     if (!timechart) return;
+    
+    // Find the activity to check if it's a parent with children
+    const activity = timechart.activities.find(a => a.id === id);
+    const childIds = activity?.childActivityIds || [];
+    
+    // Remove the activity and its children
+    const idsToRemove = [id, ...childIds];
     setTimechart({
       ...timechart,
-      activities: timechart.activities.filter(a => a.id !== id),
+      activities: timechart.activities.filter(a => !idsToRemove.includes(a.id)),
     });
   };
 
