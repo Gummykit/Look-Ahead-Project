@@ -55,6 +55,7 @@ export default function CreateProjectScreen() {
       projectDescription: projectDescription.trim() || undefined,
       startDate: start,
       endDate: end,
+      nonWorkingDays: [],
       publicHolidays: [],
       subcontractors: [],
       floorLevels: [

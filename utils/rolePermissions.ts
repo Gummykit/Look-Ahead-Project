@@ -22,6 +22,8 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canDeleteSubcontractor: true,
     canViewTimechart: true,
     canLogDailyActivity: true,
+    canMarkActivityStarted: true,
+    canMarkActivityComplete: true,
   },
   'sub-contractor': {
     canEdit: true,
@@ -35,6 +37,8 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canDeleteSubcontractor: true,
     canViewTimechart: true,
     canLogDailyActivity: true,
+    canMarkActivityStarted: true,
+    canMarkActivityComplete: true,
   },
   observer: {
     canEdit: false,
@@ -47,7 +51,9 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canAddSubcontractor: false,
     canDeleteSubcontractor: false,
     canViewTimechart: true,
-    canLogDailyActivity: true, // Observers can log daily progress
+    canLogDailyActivity: true,
+    canMarkActivityStarted: false,
+    canMarkActivityComplete: false,
   },
 };
 

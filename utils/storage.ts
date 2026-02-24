@@ -12,7 +12,12 @@ export const saveTimechart = async (timechart: TimeChartData): Promise<void> => 
       ...timechart,
       startDate: new Date(timechart.startDate).toISOString(),
       endDate: new Date(timechart.endDate).toISOString(),
-      publicHolidays: timechart.publicHolidays.map(h => ({
+      nonWorkingDays: (timechart.nonWorkingDays || []).map(h => ({
+        ...h,
+        date: new Date(h.date).toISOString()
+      })),
+      // Keep publicHolidays for backward compatibility
+      publicHolidays: (timechart.publicHolidays || []).map(h => ({
         ...h,
         date: new Date(h.date).toISOString()
       })),
@@ -48,7 +53,12 @@ export const getTimechart = async (id: string): Promise<TimeChartData | null> =>
       ...data,
       startDate: new Date(data.startDate),
       endDate: new Date(data.endDate),
-      publicHolidays: data.publicHolidays.map((h: any) => ({
+      nonWorkingDays: (data.nonWorkingDays || data.publicHolidays || []).map((h: any) => ({
+        ...h,
+        date: new Date(h.date)
+      })),
+      // Keep publicHolidays for backward compatibility
+      publicHolidays: (data.publicHolidays || data.nonWorkingDays || []).map((h: any) => ({
         ...h,
         date: new Date(h.date)
       })),
@@ -89,7 +99,12 @@ export const getAllTimecharts = async (): Promise<TimeChartData[]> => {
           ...data,
           startDate: new Date(data.startDate),
           endDate: new Date(data.endDate),
-          publicHolidays: data.publicHolidays.map((h: any) => ({
+          nonWorkingDays: (data.nonWorkingDays || data.publicHolidays || []).map((h: any) => ({
+            ...h,
+            date: new Date(h.date)
+          })),
+          // Keep publicHolidays for backward compatibility
+          publicHolidays: (data.publicHolidays || data.nonWorkingDays || []).map((h: any) => ({
             ...h,
             date: new Date(h.date)
           })),

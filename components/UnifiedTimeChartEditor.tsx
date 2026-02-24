@@ -736,7 +736,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 <TouchableOpacity 
                   onPress={() => {
                     // Check if user has permission to mark complete
-                    if (user && !canPerformAction(user.role, 'canEdit')) {
+                    if (user && !canPerformAction(user.role, 'canMarkActivityComplete')) {
                       Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
                       return;
                     }
@@ -750,7 +750,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 <TouchableOpacity 
                   onPress={() => {
                     // Check if user has permission to mark started
-                    if (user && !canPerformAction(user.role, 'canEdit')) {
+                    if (user && !canPerformAction(user.role, 'canMarkActivityStarted')) {
                       Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
                       return;
                     }
@@ -811,7 +811,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     </Text>
                     <TouchableOpacity 
                       onPress={() => {
-                        if (user && !canPerformAction(user.role, 'canEdit')) {
+                        if (user && !canPerformAction(user.role, 'canMarkActivityComplete')) {
                           Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
                           return;
                         }
@@ -824,7 +824,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     </TouchableOpacity>
                     <TouchableOpacity 
                       onPress={() => {
-                        if (user && !canPerformAction(user.role, 'canEdit')) {
+                        if (user && !canPerformAction(user.role, 'canMarkActivityStarted')) {
                           Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
                           return;
                         }

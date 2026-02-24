@@ -114,6 +114,8 @@ export interface RolePermissions {
   canDeleteSubcontractor: boolean;
   canViewTimechart: boolean;
   canLogDailyActivity: boolean;
+  canMarkActivityStarted: boolean;
+  canMarkActivityComplete: boolean;
 }
 
 export interface ChartConfig {
