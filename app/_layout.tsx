@@ -1,11 +1,12 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ActivityIndicator, View } from 'react-native';
+import { useEffect } from 'react';
 
 export const unstable_settings = {
   anchor: 'login',  // Changed: Login is the default/root screen
@@ -14,8 +15,25 @@ export const unstable_settings = {
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const { isLoggedIn, isLoading } = useAuth();
+  const router = useRouter();
+  const segments = useSegments();
 
   console.log('🟣 [Layout] RootLayoutNav rendered - isLoggedIn:', isLoggedIn, 'isLoading:', isLoading);
+
+  // Redirect based on auth state once loading is complete
+  useEffect(() => {
+    if (isLoading !== false) return; // Still loading, wait
+
+    const inAuthScreen = segments[0] === 'login';
+
+    if (!isLoggedIn && !inAuthScreen) {
+      // Not logged in and not on the login screen → send to login
+      router.replace('/login');
+    } else if (isLoggedIn && inAuthScreen) {
+      // Logged in but still on the login screen → send to home
+      router.replace('/');
+    }
+  }, [isLoggedIn, isLoading, segments]);
 
   // Show loading screen while auth state is being checked (treat undefined as loading)
   if (isLoading !== false) {
