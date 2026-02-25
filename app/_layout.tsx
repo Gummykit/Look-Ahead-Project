@@ -17,8 +17,8 @@ function RootLayoutNav() {
 
   console.log('🟣 [Layout] RootLayoutNav rendered - isLoggedIn:', isLoggedIn, 'isLoading:', isLoading);
 
-  // Show loading screen while auth state is being checked
-  if (isLoading) {
+  // Show loading screen while auth state is being checked (treat undefined as loading)
+  if (isLoading !== false) {
     console.log('🟣 [Layout] Still loading, showing spinner');
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>

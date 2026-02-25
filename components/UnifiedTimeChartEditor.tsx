@@ -528,6 +528,33 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     }
   };
 
+  // Group activities by name and contractor ID
+  const groupActivitiesByNameAndContractor = () => {
+    const groupedMap = new Map<string, Activity[]>();
+    
+    (timechart.activities || [])
+      .filter(activity => !activity.parentActivityId) // Only parent activities
+      .forEach(activity => {
+        const groupKey = `${activity.name}|${activity.subcontractorId}`;
+        if (!groupedMap.has(groupKey)) {
+          groupedMap.set(groupKey, []);
+        }
+        groupedMap.get(groupKey)!.push(activity);
+      });
+
+    // Convert to array and sort by first activity's start date
+    return Array.from(groupedMap.values())
+      .map(group => ({
+        activities: group.sort((a, b) => (a.floorLevelId || '').localeCompare(b.floorLevelId || '')),
+        groupKey: (group[0].subcontractorId || '') + (group[0].name || ''),
+      }))
+      .sort((a, b) => {
+        const aStartDate = new Date(a.activities[0].startDate).getTime();
+        const bStartDate = new Date(b.activities[0].startDate).getTime();
+        return aStartDate - bStartDate;
+      });
+  };
+
   const renderDayHeaders = () => {
     const items = [];
 
@@ -616,14 +643,19 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     return items;
   };
 
-  const renderDateCells = (activity: Activity, startDay: number) => {
+  const renderDateCells = (groupedActivities: Activity | Activity[], startDay: number) => {
     const cells = [];
+    // Handle both single activity (for backward compatibility) and grouped activities array
+    const activitiesArray = Array.isArray(groupedActivities) ? groupedActivities : [groupedActivities];
+    const primaryActivity = activitiesArray[0];
+    const isGrouped = activitiesArray.length > 1;
+
     // Use dragActivity if this is the one being dragged, otherwise use original activity
-    const displayActivity = draggingActivityId === activity.id && dragActivity ? dragActivity : activity;
-    const displayStartDay = getDaysBetween(timechart.startDate, displayActivity.startDate);
+    const displayPrimaryActivity = draggingActivityId === primaryActivity.id && dragActivity ? dragActivity : primaryActivity;
+    const displayStartDay = getDaysBetween(timechart.startDate, displayPrimaryActivity.startDate);
     
     // Calculate end day - add 1 to include the end date itself
-    const endDay = displayStartDay + getDaysBetween(displayActivity.startDate, displayActivity.endDate) + 1;
+    const endDay = displayStartDay + getDaysBetween(displayPrimaryActivity.startDate, displayPrimaryActivity.endDate) + 1;
 
     for (let i = 0; i < totalDays; i++) {
       const currentDate = new Date(timechart.startDate);
@@ -636,10 +668,12 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       // Show activity indicator only on working days (not holidays, not weekends)
       const shouldShowActivity = isActivityDay && !isHoliday && !isWeekend;
 
-      // Check if there's a daily log for this activity and date
-      const hasActivityLog = timechart.dailyActivityLogs?.some(
-        log => log.activityId === activity.id && 
-               new Date(log.date).toDateString() === currentDate.toDateString()
+      // Check if there's a daily log for any activity in the group and date
+      const hasActivityLog = activitiesArray.some(act =>
+        timechart.dailyActivityLogs?.some(
+          log => log.activityId === act.id && 
+                 new Date(log.date).toDateString() === currentDate.toDateString()
+        )
       );
 
       let backgroundColor = '#FFF';
@@ -649,7 +683,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       cells.push(
         <TouchableOpacity
           key={`cell-${i}`}
-          onPress={() => shouldShowActivity && handleCellDoubleTab(activity, currentDate, `cell-${activity.id}-${i}`)}
+          onPress={() => shouldShowActivity && handleCellDoubleTab(primaryActivity, currentDate, `cell-${primaryActivity.id}-${i}`)}
           activeOpacity={0.6}
         >
           <View
@@ -662,23 +696,48 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               },
             ]}
             onStartShouldSetResponder={() => true}
-            onMoveShouldSetResponder={() => draggingActivityId === activity.id}
-            onResponderGrant={(event) => handleActivityPressIn(activity, event)}
+            onMoveShouldSetResponder={() => draggingActivityId === primaryActivity.id}
+            onResponderGrant={(event) => handleActivityPressIn(primaryActivity, event)}
             onResponderMove={handleActivityPressMove}
             onResponderRelease={handleActivityPressOut}
           >
             {shouldShowActivity && (
               <>
-                <View
-                  style={[
-                    styles.activityIndicator,
-                    { 
-                      backgroundColor: displayActivity.floorLevelColor,
-                      opacity: draggingActivityId === activity.id ? 0.7 : 1,
-                    },
-                    displayActivity.isCompleted && styles.completedActivityIndicator,
-                  ]}
-                />
+                {isGrouped ? (
+                  // Subdivided cell for multiple floor levels
+                  <View style={[styles.subdivisionContainer, { height: '70%', width: '90%' }]}>
+                    {activitiesArray.map((activity, idx) => {
+                      const isBeingDragged = draggingActivityId === activity.id;
+                      return (
+                        <View
+                          key={`subdivision-${activity.id}`}
+                          style={[
+                            styles.subdividedActivityIndicator,
+                            { 
+                              backgroundColor: activity.floorLevelColor,
+                              flex: 1,
+                              opacity: isBeingDragged ? 0.7 : 1,
+                            },
+                            idx < activitiesArray.length - 1 && styles.subdividedActivityIndicatorBorder,
+                            activity.isCompleted && styles.completedActivityIndicator,
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
+                ) : (
+                  // Single activity indicator
+                  <View
+                    style={[
+                      styles.activityIndicator,
+                      { 
+                        backgroundColor: displayPrimaryActivity.floorLevelColor,
+                        opacity: draggingActivityId === primaryActivity.id ? 0.7 : 1,
+                      },
+                      displayPrimaryActivity.isCompleted && styles.completedActivityIndicator,
+                    ]}
+                  />
+                )}
                 {/* Visual indicator for daily log */}
                 {hasActivityLog && (
                   <View style={styles.logIndicator} />
@@ -694,90 +753,112 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   const renderActivityRows = () => {
-    return timechart.activities
-      .filter(activity => !activity.parentActivityId) // Only render parent activities
-      .map((activity) => {
-        const activityStartDay = getDaysBetween(timechart.startDate, activity.startDate);
-        const contractorName = timechart.subcontractors.find(
-          c => c.id === activity.subcontractorId
-        )?.name || 'Unassigned';
+    const groupedActivities = groupActivitiesByNameAndContractor();
 
-        // Get child activities for this parent
-        const childActivities = activity.childActivityIds 
-          ? timechart.activities.filter(a => activity.childActivityIds?.includes(a.id))
-          : [];
+    return groupedActivities.map((group) => {
+      const activities = group.activities;
+      const primaryActivity = activities[0]; // Use first activity as primary
+      const isGrouped = activities.length > 1;
 
-        return (
-          <View key={`activity-${activity.id}`}>
-            {/* Parent Activity Row */}
+      const activityStartDay = getDaysBetween(timechart.startDate, primaryActivity.startDate);
+      const contractorName = timechart.subcontractors.find(
+        c => c.id === primaryActivity.subcontractorId
+      )?.name || 'Unassigned';
+
+      // Get child activities for this primary activity
+      const childActivities = primaryActivity.childActivityIds 
+        ? timechart.activities.filter(a => primaryActivity.childActivityIds?.includes(a.id))
+        : [];
+
+      return (
+        <View key={`activity-group-${group.groupKey}`}>
+            {/* Parent Activity Row (Grouped if multiple floors) */}
             <View style={styles.activityRowContainer}>
               <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
                 <Text 
                   style={[
                     styles.activityCellText,
-                    activity.isCompleted && styles.completedActivityCellText
+                    primaryActivity.isCompleted && styles.completedActivityCellText
                   ]} 
                   numberOfLines={2}
                 >
-                  {activity.name}
+                  {primaryActivity.name}
+                  {isGrouped && <Text style={{ fontSize: 11, color: '#999' }}> ({activities.length})</Text>}
                 </Text>
               </View>
 
               <View style={[styles.cell, styles.contractorCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
-                <View
-                  style={[
-                    styles.contractorColorDot,
-                    { backgroundColor: activity.floorLevelColor },
-                  ]}
-                />
-                <Text style={styles.contractorCellText} numberOfLines={1}>
-                  {contractorName}
-                </Text>
-                <TouchableOpacity 
-                  onPress={() => {
-                    // Check if user has permission to mark complete
-                    if (user && !canPerformAction(user.role, 'canMarkActivityComplete')) {
-                      Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
-                      return;
-                    }
-                    handleToggleActivityCompletion(activity.id);
-                  }}
-                >
-                  <Text style={[styles.completeActivityText, activity.isCompleted && styles.completeActivityTextActive]}>
-                    ✓
+                {/* Name row: color dot + contractor name */}
+                <View style={styles.contractorNameRow}>
+                  {!isGrouped ? (
+                    <View
+                      style={[
+                        styles.contractorColorDot,
+                        { backgroundColor: primaryActivity.floorLevelColor },
+                      ]}
+                    />
+                  ) : (
+                    <View style={[styles.contractorColorDot, { width: 8, height: 8, borderRadius: 4, backgroundColor: primaryActivity.floorLevelColor }]} />
+                  )}
+                  <Text style={styles.contractorCellText} numberOfLines={1}>
+                    {contractorName}
                   </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => {
-                    // Check if user has permission to mark started
-                    if (user && !canPerformAction(user.role, 'canMarkActivityStarted')) {
-                      Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
-                      return;
-                    }
-                    handleToggleActivityStarted(activity.id);
-                  }}
-                  style={[styles.startedButton, activity.isStarted && styles.startedButtonActive]}
-                >
-                  <Text style={[styles.startedButtonText, activity.isStarted && styles.startedButtonTextActive]}>
-                    Mark as started
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => {
-                    // Check if user has permission to delete activities
-                    if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
-                      Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
-                      return;
-                    }
-                    onRemoveActivity(activity.id);
-                  }}
-                >
-                  <Text style={styles.removeActivityText}>✕</Text>
-                </TouchableOpacity>
+                </View>
+                {/* Action buttons row */}
+                <View style={styles.contractorActionsRow}>
+                  <TouchableOpacity 
+                    onPress={() => {
+                      if (user && !canPerformAction(user.role, 'canMarkActivityComplete')) {
+                        Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
+                        return;
+                      }
+                      // Determine target state: if ALL are completed, uncomplete all; otherwise complete all
+                      const allCompleted = activities.every(act => act.isCompleted);
+                      activities.forEach(act => {
+                        onUpdateActivity(act.id, { ...act, isCompleted: !allCompleted });
+                      });
+                    }}
+                  >
+                    <Text style={[styles.completeActivityText, primaryActivity.isCompleted && styles.completeActivityTextActive]}>
+                      ✓
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    onPress={() => {
+                      if (user && !canPerformAction(user.role, 'canMarkActivityStarted')) {
+                        Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
+                        return;
+                      }
+                      // Determine target state: if ALL are started, unstart all; otherwise start all
+                      const allStarted = activities.every(act => act.isStarted);
+                      activities.forEach(act => {
+                        onUpdateActivity(act.id, { ...act, isStarted: !allStarted });
+                      });
+                    }}
+                    style={[styles.startedButton, primaryActivity.isStarted && styles.startedButtonActive]}
+                  >
+                    <Text style={[styles.startedButtonText, primaryActivity.isStarted && styles.startedButtonTextActive]}>
+                      {primaryActivity.isStarted ? 'Started' : 'Start'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    onPress={() => {
+                      if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
+                        Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
+                        return;
+                      }
+                      activities.forEach(act => {
+                        onRemoveActivity(act.id);
+                      });
+                    }}
+                  >
+                    <Text style={styles.removeActivityText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <View style={styles.chartArea}>
-                {renderDateCells(activity, activityStartDay)}
+                {renderDateCells(activities, activityStartDay)}
               </View>
             </View>
 
@@ -800,54 +881,59 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                   </View>
 
                   <View style={[styles.cell, styles.contractorCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
-                    <View
-                      style={[
-                        styles.contractorColorDot,
-                        { backgroundColor: childActivity.floorLevelColor, opacity: 0.6 },
-                      ]}
-                    />
-                    <Text style={styles.contractorCellText} numberOfLines={1}>
-                      {contractorName}
-                    </Text>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        if (user && !canPerformAction(user.role, 'canMarkActivityComplete')) {
-                          Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
-                          return;
-                        }
-                        handleToggleActivityCompletion(childActivity.id);
-                      }}
-                    >
-                      <Text style={[styles.completeActivityText, childActivity.isCompleted && styles.completeActivityTextActive]}>
-                        ✓
+                    {/* Name row */}
+                    <View style={styles.contractorNameRow}>
+                      <View
+                        style={[
+                          styles.contractorColorDot,
+                          { backgroundColor: childActivity.floorLevelColor, opacity: 0.6 },
+                        ]}
+                      />
+                      <Text style={styles.contractorCellText} numberOfLines={1}>
+                        {contractorName}
                       </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        if (user && !canPerformAction(user.role, 'canMarkActivityStarted')) {
-                          Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
-                          return;
-                        }
-                        handleToggleActivityStarted(childActivity.id);
-                      }}
-                      style={[styles.startedButton, childActivity.isStarted && styles.startedButtonActive]}
-                    >
-                      <Text style={[styles.startedButtonText, childActivity.isStarted && styles.startedButtonTextActive]}>
-                        Mark as started
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
-                          Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
-                          return;
-                        }
-                        // Delete both parent and child activities
-                        onRemoveActivity(activity.id);
-                      }}
-                    >
-                      <Text style={styles.removeActivityText}>✕</Text>
-                    </TouchableOpacity>
+                    </View>
+                    {/* Action buttons row */}
+                    <View style={styles.contractorActionsRow}>
+                      <TouchableOpacity 
+                        onPress={() => {
+                          if (user && !canPerformAction(user.role, 'canMarkActivityComplete')) {
+                            Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
+                            return;
+                          }
+                          handleToggleActivityCompletion(childActivity.id);
+                        }}
+                      >
+                        <Text style={[styles.completeActivityText, childActivity.isCompleted && styles.completeActivityTextActive]}>
+                          ✓
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => {
+                          if (user && !canPerformAction(user.role, 'canMarkActivityStarted')) {
+                            Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
+                            return;
+                          }
+                          handleToggleActivityStarted(childActivity.id);
+                        }}
+                        style={[styles.startedButton, childActivity.isStarted && styles.startedButtonActive]}
+                      >
+                        <Text style={[styles.startedButtonText, childActivity.isStarted && styles.startedButtonTextActive]}>
+                          {childActivity.isStarted ? 'Started' : 'Start'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => {
+                          if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
+                            Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
+                            return;
+                          }
+                          onRemoveActivity(primaryActivity.id);
+                        }}
+                      >
+                        <Text style={styles.removeActivityText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
                   <View style={styles.chartArea}>
@@ -858,7 +944,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             })}
           </View>
         );
-      });
+    });
   };
 
   // Memoize activity rows to ensure they update when timechart changes
@@ -968,7 +1054,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
           {/* Activity Rows */}
           <View>
-            {timechart.activities.length > 0 ? (
+            {(timechart.activities || []).length > 0 ? (
               memoizedActivityRows
             ) : (
               <View style={[styles.cell, { padding: 16, marginTop: 10 }]}>
@@ -1708,12 +1794,24 @@ const styles = StyleSheet.create({
   contractorCell: {
     backgroundColor: '#F5F5F5',
     justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    alignItems: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     borderRightWidth: 2,
     borderRightColor: '#0066CC',
+    flexDirection: 'column',
+  },
+  contractorNameRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 4,
+  },
+  contractorActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    gap: 4,
   },
   contractorColorDot: {
     width: 14,
@@ -2181,5 +2279,26 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     color: '#555',
     paddingLeft: 8,
+  },
+  // Activity Grouping and Cell Subdivision Styles
+  subdivisionContainer: {
+    flexDirection: 'column',
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.1)',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  subdividedActivityIndicator: {
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+  },
+  subdividedActivityIndicatorBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.15)',
   },
 });

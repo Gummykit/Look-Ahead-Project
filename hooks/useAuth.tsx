@@ -159,6 +159,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const value: IAuthContext = {
     user,
     isLoggedIn,
+    isLoading,
     login,
     logout,
     signup,
