@@ -15,10 +15,205 @@ import {
   Image,
   FlatList,
   SafeAreaView,
+  Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { TimeChartData, Activity, User } from '../types';
 import { getDaysBetween, getSignedDaysBetween, isPublicHoliday, isNonWorkingDay } from '../utils/dateUtils';
 import { canPerformAction } from '../utils/rolePermissions';
+
+// ─── Cross-platform Date Picker Field ────────────────────────────────────────
+interface DatePickerFieldProps {
+  label: string;
+  value: string; // YYYY-MM-DD string
+  onChange: (dateString: string) => void;
+  minDate?: Date;
+  maxDate?: Date;
+}
+
+const DatePickerField: React.FC<DatePickerFieldProps> = ({ label, value, onChange, minDate, maxDate }) => {
+  const [showPicker, setShowPicker] = useState(false);
+
+  // Parse current value to a Date for the native picker
+  const parsedDate = value
+    ? (() => { const [y, m, d] = value.split('-').map(Number); return new Date(y, m - 1, d); })()
+    : new Date();
+
+  if (Platform.OS === 'web') {
+    // On web, use the browser's native date input
+    return (
+      <View>
+        <Text style={datePickerStyles.label}>{label}</Text>
+        <View style={datePickerStyles.webInputWrapper}>
+          <Text style={datePickerStyles.calendarIcon}>📅</Text>
+          <input
+            type="date"
+            value={value}
+            min={minDate ? minDate.toISOString().split('T')[0] : undefined}
+            max={maxDate ? maxDate.toISOString().split('T')[0] : undefined}
+            onChange={(e) => onChange(e.target.value)}
+            style={{
+              flex: 1,
+              border: 'none',
+              background: 'transparent',
+              fontSize: 13,
+              color: '#333',
+              outline: 'none',
+              cursor: 'pointer',
+            }}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  // iOS / Android: show a button that opens a DateTimePicker modal
+  return (
+    <View>
+      <Text style={datePickerStyles.label}>{label}</Text>
+      <TouchableOpacity style={datePickerStyles.nativeButton} onPress={() => setShowPicker(true)}>
+        <Text style={datePickerStyles.calendarIcon}>📅</Text>
+        <Text style={datePickerStyles.nativeButtonText}>{value || 'Select a date'}</Text>
+      </TouchableOpacity>
+      {showPicker && (
+        <Modal transparent animationType="slide">
+          <View style={datePickerStyles.modalOverlay}>
+            <View style={datePickerStyles.pickerCard}>
+              <DateTimePicker
+                value={parsedDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                minimumDate={minDate}
+                maximumDate={maxDate}
+                onChange={(_event, selectedDate) => {
+                  if (Platform.OS === 'android') setShowPicker(false);
+                  if (selectedDate) {
+                    const y = selectedDate.getFullYear();
+                    const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+                    const d = String(selectedDate.getDate()).padStart(2, '0');
+                    onChange(`${y}-${m}-${d}`);
+                  }
+                }}
+              />
+              <TouchableOpacity style={datePickerStyles.doneButton} onPress={() => setShowPicker(false)}>
+                <Text style={datePickerStyles.doneButtonText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </View>
+  );
+};
+
+const datePickerStyles = StyleSheet.create({
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  webInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#DDD',
+  },
+  calendarIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  nativeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#DDD',
+  },
+  nativeButtonText: {
+    fontSize: 13,
+    color: '#333',
+    flex: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  pickerCard: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 20,
+    paddingTop: 8,
+    alignItems: 'center',
+  },
+  doneButton: {
+    marginTop: 12,
+    backgroundColor: '#0066CC',
+    borderRadius: 8,
+    paddingHorizontal: 40,
+    paddingVertical: 10,
+  },
+  doneButtonText: {
+    color: '#FFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+});
+
+const holidayTypeStyles = StyleSheet.create({
+  optionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  optionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9F9F9',
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#DDD',
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  optionButtonSelected: {
+    backgroundColor: '#FFF5F5',
+    borderWidth: 2,
+  },
+  colorSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  optionLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: '#555',
+    fontWeight: '500',
+  },
+  optionLabelSelected: {
+    color: '#222',
+    fontWeight: '700',
+  },
+  checkmark: {
+    fontSize: 14,
+    color: '#CC2200',
+    fontWeight: '700',
+  },
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface UnifiedTimeChartEditorProps {
   timechart: TimeChartData;
@@ -73,6 +268,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
   const [holidayName, setHolidayName] = useState('');
   const [holidayDate, setHolidayDate] = useState('');
+  const [holidayType, setHolidayType] = useState<'public-holiday' | 'non-working-day'>('non-working-day');
 
   const [activityName, setActivityName] = useState('');
   const [activityDescription, setActivityDescription] = useState('');
@@ -130,8 +326,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    if (!holidayName.trim() || !holidayDate.trim()) {
-      Alert.alert('Error', 'Please enter non-working day name and date');
+    if (!holidayDate.trim()) {
+      Alert.alert('Error', 'Please enter non-working day date');
       return;
     }
 
@@ -154,15 +350,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
     const addFunction = onAddNonWorkingDay || onAddHoliday;
     if (addFunction) {
+      const color = holidayType === 'public-holiday' ? '#FFB3B3' : '#FFE0E0';
+      const name = holidayType === 'public-holiday' ? 'Public Holiday' : 'Non-Working Day';
       addFunction({
         date: holidayDateObj,
-        name: holidayName.trim(),
-        color: '#FFE0E0',
+        name,
+        color,
       });
     }
 
-    setHolidayName('');
+    // setHolidayName(''); // Name field is commented out
     setHolidayDate('');
+    setHolidayType('non-working-day');
     setShowAddHolidayModal(false);
   };
 
@@ -1145,24 +1344,22 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               </View>
 
               <View style={styles.formSection}>
-                <Text style={styles.label}>Start Date *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#999"
+                <DatePickerField
+                  label="Start Date *"
                   value={startActivityDate}
-                  onChangeText={setStartActivityDate}
+                  onChange={setStartActivityDate}
+                  minDate={new Date(timechart.startDate)}
+                  maxDate={new Date(timechart.endDate)}
                 />
               </View>
 
               <View style={styles.formSection}>
-                <Text style={styles.label}>End Date *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#999"
+                <DatePickerField
+                  label="End Date *"
                   value={endActivityDate}
-                  onChangeText={setEndActivityDate}
+                  onChange={setEndActivityDate}
+                  minDate={new Date(timechart.startDate)}
+                  maxDate={new Date(timechart.endDate)}
                 />
               </View>
 
@@ -1303,7 +1500,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             </View>
 
             <ScrollView style={styles.formContainer}>
-              <View style={styles.formSection}>
+              {/* <View style={styles.formSection}>
                 <Text style={styles.label}>Non-Working Day Name *</Text>
                 <TextInput
                   style={styles.input}
@@ -1312,17 +1509,57 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                   value={holidayName}
                   onChangeText={setHolidayName}
                 />
+              </View> */}
+
+              <View style={styles.formSection}>
+                <DatePickerField
+                  label="Date *"
+                  value={holidayDate}
+                  onChange={setHolidayDate}
+                  minDate={new Date(timechart.startDate)}
+                  maxDate={new Date(timechart.endDate)}
+                />
               </View>
 
               <View style={styles.formSection}>
-                <Text style={styles.label}>Date (YYYY-MM-DD) *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#999"
-                  value={holidayDate}
-                  onChangeText={setHolidayDate}
-                />
+                <Text style={styles.label}>Day Type *</Text>
+                <View style={holidayTypeStyles.optionsRow}>
+                  <TouchableOpacity
+                    style={[
+                      holidayTypeStyles.optionButton,
+                      holidayType === 'non-working-day' && holidayTypeStyles.optionButtonSelected,
+                      { borderColor: '#FFB0B0' },
+                    ]}
+                    onPress={() => setHolidayType('non-working-day')}
+                  >
+                    <View style={[holidayTypeStyles.colorSwatch, { backgroundColor: '#FFE0E0' }]} />
+                    <Text style={[
+                      holidayTypeStyles.optionLabel,
+                      holidayType === 'non-working-day' && holidayTypeStyles.optionLabelSelected,
+                    ]}>Non-Working Day</Text>
+                    {holidayType === 'non-working-day' && (
+                      <Text style={holidayTypeStyles.checkmark}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      holidayTypeStyles.optionButton,
+                      holidayType === 'public-holiday' && holidayTypeStyles.optionButtonSelected,
+                      { borderColor: '#FF7070' },
+                    ]}
+                    onPress={() => setHolidayType('public-holiday')}
+                  >
+                    <View style={[holidayTypeStyles.colorSwatch, { backgroundColor: '#FFB3B3' }]} />
+                    <Text style={[
+                      holidayTypeStyles.optionLabel,
+                      holidayType === 'public-holiday' && holidayTypeStyles.optionLabelSelected,
+                    ]}>Public Holiday</Text>
+                    {holidayType === 'public-holiday' && (
+                      <Text style={holidayTypeStyles.checkmark}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <View style={styles.divider} />
