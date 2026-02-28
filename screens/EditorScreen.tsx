@@ -199,19 +199,38 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
     // Create the updated activity object (without childUpdates property)
     const { childUpdates: _, ...activityToUpdate } = updatedActivity;
 
-    setTimechart({
-      ...timechart,
-      activities: timechart.activities.map(a => {
-        if (a.id === id) {
-          return { ...a, ...activityToUpdate };
-        }
-        // Also apply child updates if any
-        const childUpdate = childUpdates.find((cu: any) => cu.childId === a.id);
-        if (childUpdate) {
-          return { ...a, ...childUpdate.updates };
-        }
-        return a;
-      }),
+    setTimechart(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        activities: prev.activities.map(a => {
+          if (a.id === id) {
+            return { ...a, ...activityToUpdate };
+          }
+          // Also apply child updates if any
+          const childUpdate = childUpdates.find((cu: any) => cu.childId === a.id);
+          if (childUpdate) {
+            return { ...a, ...childUpdate.updates };
+          }
+          return a;
+        }),
+      };
+    });
+  };
+
+  // Batch update multiple activities in a single state update to avoid stale closure issues
+  const handleBatchUpdateActivities = (updates: Array<{ id: string; changes: any }>) => {
+    if (!timechart) return;
+    const updateMap = new Map(updates.map(u => [u.id, u.changes]));
+    setTimechart(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        activities: prev.activities.map(a => {
+          const changes = updateMap.get(a.id);
+          return changes ? { ...a, ...changes } : a;
+        }),
+      };
     });
   };
 
@@ -338,6 +357,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
         onRemoveSubcontractor={handleRemoveSubcontractor}
         onAddActivity={handleAddActivity}
         onUpdateActivity={handleUpdateActivity}
+        onBatchUpdateActivities={handleBatchUpdateActivities}
         onRemoveActivity={handleRemoveActivity}
         onAddFloorLevel={handleAddFloorLevel}
         onUpdateFloorLevel={handleUpdateFloorLevel}

@@ -227,6 +227,7 @@ interface UnifiedTimeChartEditorProps {
   onAddActivity: (activity: any) => void;
   onRemoveActivity: (id: string) => void;
   onUpdateActivity: (id: string, activity: any) => void;
+  onBatchUpdateActivities?: (updates: Array<{ id: string; changes: any }>) => void;
   onAddFloorLevel: (floorLevel: any) => void;
   onUpdateFloorLevel: (id: string, floorLevel: any) => void;
   onRemoveFloorLevel: (id: string) => void;
@@ -246,6 +247,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   onAddActivity,
   onRemoveActivity,
   onUpdateActivity,
+  onBatchUpdateActivities,
   onAddFloorLevel,
   onUpdateFloorLevel,
   onRemoveFloorLevel,
@@ -269,6 +271,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [holidayName, setHolidayName] = useState('');
   const [holidayDate, setHolidayDate] = useState('');
   const [holidayType, setHolidayType] = useState<'public-holiday' | 'non-working-day'>('non-working-day');
+
+  // Toggle between subdivided tile view and count number view for grouped activities
+  const [groupedCellView, setGroupedCellView] = useState<'tiles' | 'numbers'>('tiles');
 
   const [activityName, setActivityName] = useState('');
   const [activityDescription, setActivityDescription] = useState('');
@@ -903,27 +908,34 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             {shouldShowActivity && (
               <>
                 {isGrouped ? (
-                  // Subdivided cell for multiple floor levels
-                  <View style={[styles.subdivisionContainer, { height: '70%', width: '90%' }]}>
-                    {activitiesArray.map((activity, idx) => {
-                      const isBeingDragged = draggingActivityId === activity.id;
-                      return (
-                        <View
-                          key={`subdivision-${activity.id}`}
-                          style={[
-                            styles.subdividedActivityIndicator,
-                            { 
-                              backgroundColor: activity.floorLevelColor,
-                              flex: 1,
-                              opacity: isBeingDragged ? 0.7 : 1,
-                            },
-                            idx < activitiesArray.length - 1 && styles.subdividedActivityIndicatorBorder,
-                            activity.isCompleted && styles.completedActivityIndicator,
-                          ]}
-                        />
-                      );
-                    })}
-                  </View>
+                  // Grouped cell: tile subdivisions OR number count based on view mode
+                  groupedCellView === 'tiles' ? (
+                    <View style={[styles.subdivisionContainer, { height: '70%', width: '90%' }]}>
+                      {activitiesArray.map((activity, idx) => {
+                        const isBeingDragged = draggingActivityId === activity.id;
+                        return (
+                          <View
+                            key={`subdivision-${activity.id}`}
+                            style={[
+                              styles.subdividedActivityIndicator,
+                              { 
+                                backgroundColor: activity.floorLevelColor,
+                                flex: 1,
+                                opacity: isBeingDragged ? 0.7 : 1,
+                              },
+                              idx < activitiesArray.length - 1 && styles.subdividedActivityIndicatorBorder,
+                              activity.isCompleted && styles.completedActivityIndicator,
+                            ]}
+                          />
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    // Number view: show count badge
+                    <View style={[styles.groupCountBadge, { backgroundColor: primaryActivity.floorLevelColor }]}>
+                      <Text style={styles.groupCountText}>{activitiesArray.length}</Text>
+                    </View>
+                  )
                 ) : (
                   // Single activity indicator
                   <View
@@ -1011,14 +1023,16 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                         Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
                         return;
                       }
-                      // Determine target state: if ALL are completed, uncomplete all; otherwise complete all
                       const allCompleted = activities.every(act => act.isCompleted);
-                      activities.forEach(act => {
-                        onUpdateActivity(act.id, { ...act, isCompleted: !allCompleted });
-                      });
+                      const targetCompleted = !allCompleted;
+                      if (onBatchUpdateActivities) {
+                        onBatchUpdateActivities(activities.map(act => ({ id: act.id, changes: { isCompleted: targetCompleted } })));
+                      } else {
+                        activities.forEach(act => onUpdateActivity(act.id, { isCompleted: targetCompleted }));
+                      }
                     }}
                   >
-                    <Text style={[styles.completeActivityText, primaryActivity.isCompleted && styles.completeActivityTextActive]}>
+                    <Text style={[styles.completeActivityText, activities.every(act => act.isCompleted) && styles.completeActivityTextActive]}>
                       ✓
                     </Text>
                   </TouchableOpacity>
@@ -1028,16 +1042,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                         Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
                         return;
                       }
-                      // Determine target state: if ALL are started, unstart all; otherwise start all
                       const allStarted = activities.every(act => act.isStarted);
-                      activities.forEach(act => {
-                        onUpdateActivity(act.id, { ...act, isStarted: !allStarted });
-                      });
+                      const targetStarted = !allStarted;
+                      if (onBatchUpdateActivities) {
+                        onBatchUpdateActivities(activities.map(act => ({ id: act.id, changes: { isStarted: targetStarted } })));
+                      } else {
+                        activities.forEach(act => onUpdateActivity(act.id, { isStarted: targetStarted }));
+                      }
                     }}
-                    style={[styles.startedButton, primaryActivity.isStarted && styles.startedButtonActive]}
+                    style={[styles.startedButton, activities.every(act => act.isStarted) && styles.startedButtonActive]}
                   >
-                    <Text style={[styles.startedButtonText, primaryActivity.isStarted && styles.startedButtonTextActive]}>
-                      {primaryActivity.isStarted ? 'Started' : 'Start'}
+                    <Text style={[styles.startedButtonText, activities.every(act => act.isStarted) && styles.startedButtonTextActive]}>
+                      {activities.every(act => act.isStarted) ? 'Started' : 'Start'}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity 
@@ -1147,7 +1163,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   // Memoize activity rows to ensure they update when timechart changes
-  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.nonWorkingDays, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity]);
+  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.nonWorkingDays, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity, groupedCellView]);
 
   return (
     <View style={styles.container}>
@@ -1216,6 +1232,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <Text style={styles.controlButtonText}>Manage</Text>
           </TouchableOpacity>
         ) : null}
+        {/* Toggle between tile and number view for grouped activities */}
+        <TouchableOpacity
+          style={styles.viewToggleButton}
+          onPress={() => setGroupedCellView(v => v === 'tiles' ? 'numbers' : 'tiles')}
+        >
+          <Text style={styles.viewToggleButtonText}>
+            {groupedCellView === 'tiles' ? '🔢 Count' : '🎨 Tiles'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Timechart */}
@@ -1298,6 +1323,19 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
           </View>
         </View>
       </ScrollView>
+
+      {/* Send Mail Notification Button */}
+      <View style={styles.mailNotificationBar}>
+        <TouchableOpacity
+          style={styles.mailNotificationButton}
+          onPress={() => {
+            Alert.alert('Coming Soon', 'Mail notification functionality will be available in a future update.');
+          }}
+        >
+          <Text style={styles.mailNotificationIcon}>✉️</Text>
+          <Text style={styles.mailNotificationText}>Send Mail Notification</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Add Activity Modal */}
       <Modal
@@ -2537,5 +2575,70 @@ const styles = StyleSheet.create({
   subdividedActivityIndicatorBorder: {
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0, 0, 0, 0.15)',
+  },
+  // Number badge for grouped cell count view
+  groupCountBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,0,0,0.15)',
+  },
+  groupCountText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFF',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 1,
+  },
+  // Toggle button for grouped cell view mode
+  viewToggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 4,
+  },
+  viewToggleButtonText: {
+    color: '#0066CC',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  mailNotificationBar: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F5F5F5',
+    borderTopWidth: 1,
+    borderTopColor: '#DDD',
+    alignItems: 'flex-end',
+  },
+  mailNotificationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0066CC',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 8,
+    shadowColor: '#0066CC',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  mailNotificationIcon: {
+    fontSize: 16,
+  },
+  mailNotificationText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

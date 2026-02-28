@@ -323,6 +323,21 @@ export default function EditorScreen() {
     });
   };
 
+  // Batch update multiple activities in a single state update to avoid stale closure issues
+  const handleBatchUpdateActivities = (updates: Array<{ id: string; changes: any }>) => {
+    const updateMap = new Map(updates.map(u => [u.id, u.changes]));
+    setTimechart(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        activities: prev.activities.map(a => {
+          const changes = updateMap.get(a.id);
+          return changes ? { ...a, ...changes } : a;
+        }),
+      };
+    });
+  };
+
   const handleAddFloorLevel = (floorLevel: any) => {
     if (!timechart) return;
     setTimechart({
@@ -453,6 +468,7 @@ export default function EditorScreen() {
         onAddActivity={handleAddActivity}
         onRemoveActivity={handleRemoveActivity}
         onUpdateActivity={handleUpdateActivity}
+        onBatchUpdateActivities={handleBatchUpdateActivities}
         onAddFloorLevel={handleAddFloorLevel}
         onUpdateFloorLevel={handleUpdateFloorLevel}
         onRemoveFloorLevel={handleRemoveFloorLevel}
