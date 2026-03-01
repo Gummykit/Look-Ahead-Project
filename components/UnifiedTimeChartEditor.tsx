@@ -213,6 +213,80 @@ const holidayTypeStyles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+
+const contractorModalStyles = StyleSheet.create({
+  emptyState: {
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9F9F9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EEE',
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    fontSize: 13,
+    color: '#999',
+    fontStyle: 'italic',
+  },
+  contractorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F8FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CCE5FF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    gap: 10,
+  },
+  contractorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#0066CC',
+  },
+  contractorRowName: {
+    flex: 1,
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  removeButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FFE5E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeButtonText: {
+    fontSize: 12,
+    color: '#CC0000',
+    fontWeight: '700',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  nameInput: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  addButton: {
+    backgroundColor: '#0066CC',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  addButtonText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+});
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface UnifiedTimeChartEditorProps {
@@ -280,9 +354,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [startActivityDate, setStartActivityDate] = useState(
     new Date(timechart.startDate).toISOString().split('T')[0]
   );
-  const [endActivityDate, setEndActivityDate] = useState(
-    new Date(timechart.startDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-  );
+  const [activityDuration, setActivityDuration] = useState('7');
   const [selectedSubcontractor, setSelectedSubcontractor] = useState<string | null>(
     timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null
   );
@@ -314,6 +386,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [dailyLogNotes, setDailyLogNotes] = useState('');
   const [dailyLogImages, setDailyLogImages] = useState<string[]>([]);
   
+  // Edit activity state
+  const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+
   // Double-tap detection state
   const [lastTapTime, setLastTapTime] = useState(0);
   const [lastTappedCell, setLastTappedCell] = useState<string | null>(null);
@@ -392,17 +467,23 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    // Parse dates carefully to avoid timezone issues
+    // Parse start date carefully to avoid timezone issues
     const [startYear, startMonth, startDay] = startActivityDate.split('-').map(Number);
     const start = new Date(startYear, startMonth - 1, startDay);
     start.setHours(0, 0, 0, 0);
 
-    const [endYear, endMonth, endDay] = endActivityDate.split('-').map(Number);
-    const end = new Date(endYear, endMonth - 1, endDay);
+    const durationDays = parseInt(activityDuration) || 1;
+    if (durationDays < 1) {
+      Alert.alert('Error', 'Duration must be at least 1 day');
+      return;
+    }
+
+    const end = new Date(start);
+    end.setDate(end.getDate() + durationDays - 1);
     end.setHours(0, 0, 0, 0);
 
-    if (start > end) {
-      Alert.alert('Error', 'End date must be on or after start date');
+    if (end > new Date(timechart.endDate)) {
+      Alert.alert('Error', 'Activity end date exceeds project end date');
       return;
     }
 
@@ -438,14 +519,98 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setActivityName('');
     setActivityDescription('');
     setStartActivityDate(new Date(timechart.startDate).toISOString().split('T')[0]);
-    setEndActivityDate(
-      new Date(timechart.startDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    );
+    setActivityDuration('7');
     setSelectedSubcontractor(timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
     setHasChildActivity(false);
     setChildActivityName('');
     setChildActivityDuration('1');
+    setShowAddActivityModal(false);
+  };
+
+  const handleOpenEditActivity = (activity: Activity) => {
+    if (user && !canPerformAction(user.role, 'canEdit')) {
+      Alert.alert('Permission Denied', 'You do not have permission to edit activities.');
+      return;
+    }
+    // Pre-fill form fields with existing activity data
+    setEditingActivityId(activity.id);
+    setActivityName(activity.name);
+    setActivityDescription(activity.description || '');
+    setStartActivityDate(
+      new Date(activity.startDate).toISOString().split('T')[0]
+    );
+    setActivityDuration(String(getDaysBetween(activity.startDate, activity.endDate)));
+    setSelectedSubcontractor(activity.subcontractorId);
+    setSelectedFloorLevel(activity.floorLevelId || null);
+    setHasChildActivity(false);
+    setChildActivityName('');
+    setChildActivityDuration('1');
+    setShowAddActivityModal(true);
+  };
+
+  const handleSaveEditActivity = () => {
+    if (!activityName.trim()) {
+      Alert.alert('Error', 'Please enter activity name');
+      return;
+    }
+    if (!selectedSubcontractor) {
+      Alert.alert('Error', 'Please select a subcontractor');
+      return;
+    }
+    if (!selectedFloorLevel) {
+      Alert.alert('Error', 'Please select a floor level');
+      return;
+    }
+
+    const [startYear, startMonth, startDay] = startActivityDate.split('-').map(Number);
+    const start = new Date(startYear, startMonth - 1, startDay);
+    start.setHours(0, 0, 0, 0);
+
+    const durationDays = parseInt(activityDuration) || 1;
+    if (durationDays < 1) {
+      Alert.alert('Error', 'Duration must be at least 1 day');
+      return;
+    }
+
+    const end = new Date(start);
+    end.setDate(end.getDate() + durationDays - 1);
+    end.setHours(0, 0, 0, 0);
+
+    if (end > new Date(timechart.endDate)) {
+      Alert.alert('Error', 'Activity end date exceeds project end date');
+      return;
+    }
+
+    const subcontractor = timechart.subcontractors.find(s => s.id === selectedSubcontractor);
+    const floorLevel = (timechart.floorLevels || []).find(f => f.id === selectedFloorLevel);
+
+    if (!subcontractor || !floorLevel) {
+      Alert.alert('Error', 'Invalid contractor or floor level');
+      return;
+    }
+
+    onUpdateActivity(editingActivityId!, {
+      name: activityName.trim(),
+      description: activityDescription.trim() || undefined,
+      startDate: start,
+      endDate: end,
+      duration: getDaysBetween(start, end),
+      subcontractorId: selectedSubcontractor,
+      subcontractorName: subcontractor.name,
+      floorLevelId: selectedFloorLevel,
+      floorLevelName: floorLevel.name,
+      floorLevelColor: floorLevel.color,
+    });
+
+    // Reset form
+    setEditingActivityId(null);
+    setActivityName('');
+    setActivityDescription('');
+    setStartActivityDate(new Date(timechart.startDate).toISOString().split('T')[0]);
+    setActivityDuration('7');
+    setSelectedSubcontractor(timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null);
+    setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
     setShowAddActivityModal(false);
   };
 
@@ -456,7 +621,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     }
     onAddSubcontractor(contractorName.trim());
     setContractorName('');
-    setShowAddContractorModal(false);
+    // Do NOT close the modal — let the user add more
   };
 
   const handleAddOrUpdateFloorLevel = () => {
@@ -1069,6 +1234,11 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                   >
                     <Text style={styles.removeActivityText}>✕</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleOpenEditActivity(primaryActivity)}
+                  >
+                    <Text style={styles.editActivityText}>✎</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -1147,6 +1317,11 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                         }}
                       >
                         <Text style={styles.removeActivityText}>✕</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleOpenEditActivity(childActivity)}
+                      >
+                        <Text style={styles.editActivityText}>✎</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1282,7 +1457,19 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               memoizedActivityRows
             ) : (
               <View style={[styles.cell, { padding: 16, marginTop: 10 }]}>
-                <Text style={styles.emptyText}>No activities added yet. Tap "+ Activity" to get started.</Text>
+                <Text style={styles.emptyText}>No activities added yet. Use the button below to get started.</Text>
+              </View>
+            )}
+
+            {/* Inline Add Activity button — pinned to the left label columns */}
+            {(!user || canPerformAction(user.role, 'canAddActivity')) && (
+              <View style={styles.inlineAddActivityRow}>
+                <TouchableOpacity
+                  style={[styles.inlineAddActivityButton, { width: ACTIVITY_LABEL_WIDTH + CONTRACTOR_LABEL_WIDTH - 16 }]}
+                  onPress={() => setShowAddActivityModal(true)}
+                >
+                  <Text style={styles.inlineAddActivityButtonText}>＋ Add Activity</Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>
@@ -1337,22 +1524,28 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Add Activity Modal */}
+      {/* Add / Edit Activity Modal */}
       <Modal
         visible={showAddActivityModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowAddActivityModal(false)}
+        onRequestClose={() => {
+          setEditingActivityId(null);
+          setShowAddActivityModal(false);
+        }}
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowAddActivityModal(false)}>
+              <TouchableOpacity onPress={() => {
+                setEditingActivityId(null);
+                setShowAddActivityModal(false);
+              }}>
                 <Text style={styles.closeButton}>← Back</Text>
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>Add Activity</Text>
-              <TouchableOpacity onPress={handleAddActivity}>
-                <Text style={styles.doneButton}>Done</Text>
+              <Text style={styles.modalTitle}>{editingActivityId ? 'Edit Activity' : 'Add Activity'}</Text>
+              <TouchableOpacity onPress={editingActivityId ? handleSaveEditActivity : handleAddActivity}>
+                <Text style={styles.doneButton}>{editingActivityId ? 'Save' : 'Done'}</Text>
               </TouchableOpacity>
             </View>
 
@@ -1392,13 +1585,27 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               </View>
 
               <View style={styles.formSection}>
-                <DatePickerField
-                  label="End Date *"
-                  value={endActivityDate}
-                  onChange={setEndActivityDate}
-                  minDate={new Date(timechart.startDate)}
-                  maxDate={new Date(timechart.endDate)}
+                <Text style={styles.label}>Duration (days) *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 7"
+                  placeholderTextColor="#999"
+                  value={activityDuration}
+                  onChangeText={setActivityDuration}
+                  keyboardType="numeric"
                 />
+                <Text style={styles.helperText}>
+                  {(() => {
+                    const d = parseInt(activityDuration) || 0;
+                    if (d > 0 && startActivityDate) {
+                      const [y, m, day] = startActivityDate.split('-').map(Number);
+                      const end = new Date(y, m - 1, day);
+                      end.setDate(end.getDate() + d - 1);
+                      return `Ends: ${end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+                    }
+                    return '';
+                  })()}
+                </Text>
               </View>
 
               <View style={styles.formSection}>
@@ -1471,44 +1678,48 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 </View>
               </View>
 
-              {/* Child Activity Section */}
-              <View style={styles.formSection}>
-                <View style={styles.childActivityToggleContainer}>
-                  <TouchableOpacity
-                    style={[styles.checkboxSquare, hasChildActivity && styles.checkboxSquareChecked]}
-                    onPress={() => setHasChildActivity(!hasChildActivity)}
-                  >
-                    {hasChildActivity && <Text style={styles.checkboxCheckmark}>✓</Text>}
-                  </TouchableOpacity>
-                  <Text style={styles.label}>Add Child Activity (Optional)</Text>
-                </View>
-              </View>
-
-              {hasChildActivity && (
+              {/* Child Activity Section — only shown when adding a new activity */}
+              {!editingActivityId && (
                 <>
                   <View style={styles.formSection}>
-                    <Text style={styles.label}>Child Activity Name *</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g., Inspection, Finishing"
-                      placeholderTextColor="#999"
-                      value={childActivityName}
-                      onChangeText={setChildActivityName}
-                    />
-                    <Text style={styles.helperText}>Child activity will start immediately after parent activity ends</Text>
+                    <View style={styles.childActivityToggleContainer}>
+                      <TouchableOpacity
+                        style={[styles.checkboxSquare, hasChildActivity && styles.checkboxSquareChecked]}
+                        onPress={() => setHasChildActivity(!hasChildActivity)}
+                      >
+                        {hasChildActivity && <Text style={styles.checkboxCheckmark}>✓</Text>}
+                      </TouchableOpacity>
+                      <Text style={styles.label}>Add Child Activity (Optional)</Text>
+                    </View>
                   </View>
 
-                  <View style={styles.formSection}>
-                    <Text style={styles.label}>Child Activity Duration (days) *</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g., 3"
-                      placeholderTextColor="#999"
-                      value={childActivityDuration}
-                      onChangeText={setChildActivityDuration}
-                      keyboardType="numeric"
-                    />
-                  </View>
+                  {hasChildActivity && (
+                    <>
+                      <View style={styles.formSection}>
+                        <Text style={styles.label}>Child Activity Name *</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="e.g., Inspection, Finishing"
+                          placeholderTextColor="#999"
+                          value={childActivityName}
+                          onChangeText={setChildActivityName}
+                        />
+                        <Text style={styles.helperText}>Child activity will start immediately after parent activity ends</Text>
+                      </View>
+
+                      <View style={styles.formSection}>
+                        <Text style={styles.label}>Child Activity Duration (days) *</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="e.g., 3"
+                          placeholderTextColor="#999"
+                          value={childActivityDuration}
+                          onChangeText={setChildActivityDuration}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                    </>
+                  )}
                 </>
               )}
 
@@ -1616,25 +1827,79 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowAddContractorModal(false)}>
+              <TouchableOpacity onPress={() => { setContractorName(''); setShowAddContractorModal(false); }}>
                 <Text style={styles.closeButton}>← Back</Text>
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>Add Contractor</Text>
-              <TouchableOpacity onPress={handleAddContractor}>
+              <Text style={styles.modalTitle}>Contractors</Text>
+              <TouchableOpacity onPress={() => { setContractorName(''); setShowAddContractorModal(false); }}>
                 <Text style={styles.doneButton}>Done</Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.formContainer}>
+              {/* Existing contractors list */}
               <View style={styles.formSection}>
-                <Text style={styles.label}>Contractor Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., ABC Construction Ltd."
-                  placeholderTextColor="#999"
-                  value={contractorName}
-                  onChangeText={setContractorName}
-                />
+                <Text style={styles.label}>
+                  Added Contractors ({timechart.subcontractors.length})
+                </Text>
+                {timechart.subcontractors.length === 0 ? (
+                  <View style={contractorModalStyles.emptyState}>
+                    <Text style={contractorModalStyles.emptyStateText}>No contractors added yet</Text>
+                  </View>
+                ) : (
+                  timechart.subcontractors.map((sub) => (
+                    <View key={sub.id} style={contractorModalStyles.contractorRow}>
+                      <View style={contractorModalStyles.contractorDot} />
+                      <Text style={contractorModalStyles.contractorRowName} numberOfLines={1}>
+                        {sub.name}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (user && !canPerformAction(user.role, 'canEdit')) {
+                            Alert.alert('Permission Denied', 'You do not have permission to remove contractors.');
+                            return;
+                          }
+                          Alert.alert(
+                            'Remove Contractor',
+                            `Remove "${sub.name}"? This will also remove all their activities.`,
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Remove', style: 'destructive', onPress: () => onRemoveSubcontractor(sub.id) },
+                            ]
+                          );
+                        }}
+                        style={contractorModalStyles.removeButton}
+                      >
+                        <Text style={contractorModalStyles.removeButtonText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+
+              <View style={styles.divider} />
+
+              {/* Add new contractor */}
+              <View style={styles.formSection}>
+                <Text style={styles.label}>Add New Contractor</Text>
+                <View style={contractorModalStyles.inputRow}>
+                  <TextInput
+                    style={[styles.input, contractorModalStyles.nameInput]}
+                    placeholder="e.g., ABC Construction Ltd."
+                    placeholderTextColor="#999"
+                    value={contractorName}
+                    onChangeText={setContractorName}
+                    onSubmitEditing={handleAddContractor}
+                    returnKeyType="done"
+                  />
+                  <TouchableOpacity
+                    style={contractorModalStyles.addButton}
+                    onPress={handleAddContractor}
+                  >
+                    <Text style={contractorModalStyles.addButtonText}>+ Add</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={contractorModalStyles.emptyStateText}>Type a name and tap "+ Add" — you can add as many as you need</Text>
               </View>
 
               <View style={styles.divider} />
@@ -2111,6 +2376,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FF4444',
     fontWeight: 'bold',
+  },
+  editActivityText: {
+    fontSize: 15,
+    color: '#0066CC',
+    fontWeight: 'bold',
+    marginLeft: 4,
   },
   completeActivityText: {
     fontSize: 16,
@@ -2639,6 +2910,27 @@ const styles = StyleSheet.create({
   mailNotificationText: {
     color: '#FFF',
     fontSize: 14,
+    fontWeight: '700',
+  },
+  inlineAddActivityRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  inlineAddActivityButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#0066CC',
+    backgroundColor: '#F0F8FF',
+  },
+  inlineAddActivityButtonText: {
+    color: '#0066CC',
+    fontSize: 13,
     fontWeight: '700',
   },
 });

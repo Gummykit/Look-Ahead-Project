@@ -59,6 +59,7 @@ export interface TimeChartData {
   projectName: string;
   projectDescription?: string;
   companyName: string;
+  companyLogoUri?: string;
   projectLocation: string;
   startDate: Date;
   endDate: Date;

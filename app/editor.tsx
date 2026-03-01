@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { TimeChartData } from '@/types';
@@ -452,9 +453,18 @@ export default function EditorScreen() {
           <Text style={styles.headerTitle} numberOfLines={1}>{timechart.projectName}</Text>
           <Text style={styles.headerSubtitle} numberOfLines={1}>{timechart.companyName} • {timechart.projectLocation}</Text>
         </View>
-        <TouchableOpacity onPress={handleSaveTimechart}>
-          <Text style={styles.saveButton}>Save</Text>
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          {timechart.companyLogoUri ? (
+            <Image
+              source={{ uri: timechart.companyLogoUri }}
+              style={styles.headerLogo}
+              resizeMode="contain"
+            />
+          ) : null}
+          <TouchableOpacity onPress={handleSaveTimechart}>
+            <Text style={styles.saveButton}>Save</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <UnifiedTimeChartEditor
@@ -521,6 +531,17 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerLogo: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    backgroundColor: '#FFF',
   },
   errorText: {
     fontSize: 16,

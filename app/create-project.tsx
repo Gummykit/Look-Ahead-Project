@@ -7,8 +7,10 @@ import {
   ScrollView,
   StyleSheet,
   Alert,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { TimeChartData } from '@/types';
 import { saveTimechart } from '@/utils/storage';
 
@@ -16,12 +18,30 @@ export default function CreateProjectScreen() {
   const router = useRouter();
   const [projectName, setProjectName] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [companyLogoUri, setCompanyLogoUri] = useState<string | null>(null);
   const [projectLocation, setProjectLocation] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(
     new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   );
+
+  const handlePickLogo = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your photo library to upload a logo.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets.length > 0) {
+      setCompanyLogoUri(result.assets[0].uri);
+    }
+  };
 
   const handleCreateProject = async () => {
     if (!projectName.trim()) {
@@ -51,6 +71,7 @@ export default function CreateProjectScreen() {
       id: Math.random().toString(36).substr(2, 9),
       projectName: projectName.trim(),
       companyName: companyName.trim(),
+      companyLogoUri: companyLogoUri || undefined,
       projectLocation: projectLocation.trim(),
       projectDescription: projectDescription.trim() || undefined,
       startDate: start,
@@ -109,6 +130,26 @@ export default function CreateProjectScreen() {
             onChangeText={setCompanyName}
           />
           <Text style={styles.hint}>e.g., ABC Construction Ltd.</Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.label}>Company / Builder Logo</Text>
+          <TouchableOpacity style={styles.logoPickerButton} onPress={handlePickLogo}>
+            {companyLogoUri ? (
+              <Image source={{ uri: companyLogoUri }} style={styles.logoPreview} resizeMode="contain" />
+            ) : (
+              <View style={styles.logoPlaceholder}>
+                <Text style={styles.logoPlaceholderIcon}>🏢</Text>
+                <Text style={styles.logoPlaceholderText}>Tap to upload logo</Text>
+                <Text style={styles.logoPlaceholderHint}>Square image recommended</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          {companyLogoUri && (
+            <TouchableOpacity onPress={() => setCompanyLogoUri(null)} style={styles.removeLogoButton}>
+              <Text style={styles.removeLogoText}>✕ Remove logo</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.section}>
@@ -233,6 +274,48 @@ const styles = StyleSheet.create({
   createButtonText: {
     color: '#FFF',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  logoPickerButton: {
+    borderWidth: 2,
+    borderColor: '#0066CC',
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#F0F8FF',
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoPreview: {
+    width: '100%',
+    height: 160,
+  },
+  logoPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+    gap: 6,
+  },
+  logoPlaceholderIcon: {
+    fontSize: 36,
+  },
+  logoPlaceholderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0066CC',
+  },
+  logoPlaceholderHint: {
+    fontSize: 12,
+    color: '#999',
+  },
+  removeLogoButton: {
+    marginTop: 8,
+    alignSelf: 'flex-end',
+  },
+  removeLogoText: {
+    fontSize: 12,
+    color: '#CC0000',
     fontWeight: '600',
   },
 });
