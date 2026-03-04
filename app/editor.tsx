@@ -99,6 +99,23 @@ export default function EditorScreen() {
     });
   };
 
+  const handleUpdateSubcontractor = (id: string, name: string) => {
+    if (!timechart) return;
+    setTimechart(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        subcontractors: prev.subcontractors.map(s =>
+          s.id === id ? { ...s, name } : s
+        ),
+        // Also update the cached name on any activities assigned to this contractor
+        activities: prev.activities.map(a =>
+          a.subcontractorId === id ? { ...a, subcontractorName: name } : a
+        ),
+      };
+    });
+  };
+
   const handleAddActivity = (activity: any) => {
     if (!timechart) return;
     
@@ -475,6 +492,7 @@ export default function EditorScreen() {
         onRemoveNonWorkingDay={handleRemoveHoliday}
         onAddSubcontractor={handleAddSubcontractor}
         onRemoveSubcontractor={handleRemoveSubcontractor}
+        onUpdateSubcontractor={handleUpdateSubcontractor}
         onAddActivity={handleAddActivity}
         onRemoveActivity={handleRemoveActivity}
         onUpdateActivity={handleUpdateActivity}

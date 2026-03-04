@@ -286,6 +286,37 @@ const contractorModalStyles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  contractorRowEditing: {
+    borderColor: '#0066CC',
+    backgroundColor: '#E8F4FF',
+  },
+  editButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#E8F4FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  editButtonText: {
+    fontSize: 14,
+    color: '#0066CC',
+    fontWeight: '700',
+  },
+  cancelEditButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#F0F0F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelEditButtonText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '700',
+  },
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -298,6 +329,7 @@ interface UnifiedTimeChartEditorProps {
   onRemoveNonWorkingDay?: (id: string) => void;
   onAddSubcontractor: (name: string) => void;
   onRemoveSubcontractor: (id: string) => void;
+  onUpdateSubcontractor: (id: string, name: string) => void;
   onAddActivity: (activity: any) => void;
   onRemoveActivity: (id: string) => void;
   onUpdateActivity: (id: string, activity: any) => void;
@@ -318,6 +350,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   onRemoveNonWorkingDay,
   onAddSubcontractor,
   onRemoveSubcontractor,
+  onUpdateSubcontractor,
   onAddActivity,
   onRemoveActivity,
   onUpdateActivity,
@@ -363,6 +396,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   );
 
   const [contractorName, setContractorName] = useState('');
+  const [editingContractorId, setEditingContractorId] = useState<string | null>(null);
   
   // Child activity state
   const [hasChildActivity, setHasChildActivity] = useState(false);
@@ -388,6 +422,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   
   // Edit activity state
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+
+  // Floor filter state — null means "show all floors"
+  const [activeFloorFilter, setActiveFloorFilter] = useState<string | null>(null);
 
   // Double-tap detection state
   const [lastTapTime, setLastTapTime] = useState(0);
@@ -619,9 +656,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       Alert.alert('Error', 'Please enter contractor name');
       return;
     }
-    onAddSubcontractor(contractorName.trim());
+    if (editingContractorId) {
+      // Save rename
+      onUpdateSubcontractor(editingContractorId, contractorName.trim());
+      setEditingContractorId(null);
+    } else {
+      onAddSubcontractor(contractorName.trim());
+    }
     setContractorName('');
-    // Do NOT close the modal — let the user add more
+    // Do NOT close the modal — let the user keep working
   };
 
   const handleAddOrUpdateFloorLevel = () => {
@@ -1078,6 +1121,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     <View style={[styles.subdivisionContainer, { height: '70%', width: '90%' }]}>
                       {activitiesArray.map((activity, idx) => {
                         const isBeingDragged = draggingActivityId === activity.id;
+                        const isFilteredOut = activeFloorFilter !== null && activity.floorLevelId !== activeFloorFilter;
                         return (
                           <View
                             key={`subdivision-${activity.id}`}
@@ -1086,7 +1130,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                               { 
                                 backgroundColor: activity.floorLevelColor,
                                 flex: 1,
-                                opacity: isBeingDragged ? 0.7 : 1,
+                                opacity: isFilteredOut ? 0.12 : (isBeingDragged ? 0.7 : 1),
                               },
                               idx < activitiesArray.length - 1 && styles.subdividedActivityIndicatorBorder,
                               activity.isCompleted && styles.completedActivityIndicator,
@@ -1097,9 +1141,19 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     </View>
                   ) : (
                     // Number view: show count badge
-                    <View style={[styles.groupCountBadge, { backgroundColor: primaryActivity.floorLevelColor }]}>
-                      <Text style={styles.groupCountText}>{activitiesArray.length}</Text>
-                    </View>
+                    (() => {
+                      const visibleCount = activeFloorFilter
+                        ? activitiesArray.filter(a => a.floorLevelId === activeFloorFilter).length
+                        : activitiesArray.length;
+                      const badgeColor = activeFloorFilter
+                        ? (activitiesArray.find(a => a.floorLevelId === activeFloorFilter)?.floorLevelColor ?? primaryActivity.floorLevelColor)
+                        : primaryActivity.floorLevelColor;
+                      return (
+                        <View style={[styles.groupCountBadge, { backgroundColor: badgeColor, opacity: visibleCount === 0 ? 0.12 : 1 }]}>
+                          <Text style={styles.groupCountText}>{visibleCount > 0 ? visibleCount : activitiesArray.length}</Text>
+                        </View>
+                      );
+                    })()
                   )
                 ) : (
                   // Single activity indicator
@@ -1108,7 +1162,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                       styles.activityIndicator,
                       { 
                         backgroundColor: displayPrimaryActivity.floorLevelColor,
-                        opacity: draggingActivityId === primaryActivity.id ? 0.7 : 1,
+                        opacity: (activeFloorFilter !== null && displayPrimaryActivity.floorLevelId !== activeFloorFilter)
+                          ? 0.12
+                          : (draggingActivityId === primaryActivity.id ? 0.7 : 1),
                       },
                       displayPrimaryActivity.isCompleted && styles.completedActivityIndicator,
                     ]}
@@ -1146,8 +1202,13 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         ? timechart.activities.filter(a => primaryActivity.childActivityIds?.includes(a.id))
         : [];
 
+      // For grouped rows: row is "active" if ANY activity matches the floor filter
+      const rowMatchesFilter = activeFloorFilter === null ||
+        activities.some(a => a.floorLevelId === activeFloorFilter);
+      const rowOpacity = rowMatchesFilter ? 1 : 0.25;
+
       return (
-        <View key={`activity-group-${group.groupKey}`}>
+        <View key={`activity-group-${group.groupKey}`} style={{ opacity: rowOpacity }}>
             {/* Parent Activity Row (Grouped if multiple floors) */}
             <View style={styles.activityRowContainer}>
               <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
@@ -1338,7 +1399,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   // Memoize activity rows to ensure they update when timechart changes
-  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.nonWorkingDays, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity, groupedCellView]);
+  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.nonWorkingDays, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity, groupedCellView, activeFloorFilter]);
 
   return (
     <View style={styles.container}>
@@ -1417,6 +1478,54 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Floor Filter Bar */}
+      {timechart.floorLevels && timechart.floorLevels.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.floorFilterBar}
+          contentContainerStyle={styles.floorFilterBarContent}
+        >
+          {/* "All Floors" chip */}
+          <TouchableOpacity
+            style={[
+              styles.floorFilterChip,
+              activeFloorFilter === null && styles.floorFilterChipAll,
+            ]}
+            onPress={() => setActiveFloorFilter(null)}
+          >
+            <Text style={[
+              styles.floorFilterChipText,
+              activeFloorFilter === null && styles.floorFilterChipTextActive,
+            ]}>
+              All Floors
+            </Text>
+          </TouchableOpacity>
+
+          {timechart.floorLevels.map((floor) => {
+            const isActive = activeFloorFilter === floor.id;
+            return (
+              <TouchableOpacity
+                key={floor.id}
+                style={[
+                  styles.floorFilterChip,
+                  isActive && { borderColor: floor.color, backgroundColor: floor.color },
+                ]}
+                onPress={() => setActiveFloorFilter(isActive ? null : floor.id)}
+              >
+                <View style={[styles.floorFilterChipDot, { backgroundColor: isActive ? '#FFF' : floor.color }]} />
+                <Text style={[
+                  styles.floorFilterChipText,
+                  isActive && styles.floorFilterChipTextActive,
+                ]}>
+                  {floor.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {/* Timechart */}
       <ScrollView
@@ -1586,14 +1695,28 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
               <View style={styles.formSection}>
                 <Text style={styles.label}>Duration (days) *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 7"
-                  placeholderTextColor="#999"
-                  value={activityDuration}
-                  onChangeText={setActivityDuration}
-                  keyboardType="numeric"
-                />
+                <View style={styles.durationStepper}>
+                  <TouchableOpacity
+                    style={styles.durationStepperBtn}
+                    onPress={() => setActivityDuration(d => String(Math.max(1, (parseInt(d) || 1) - 1)))}
+                  >
+                    <Text style={styles.durationStepperBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <TextInput
+                    style={styles.durationStepperInput}
+                    value={activityDuration}
+                    onChangeText={v => setActivityDuration(v.replace(/[^0-9]/g, ''))}
+                    keyboardType="numeric"
+                    textAlign="center"
+                    selectTextOnFocus
+                  />
+                  <TouchableOpacity
+                    style={styles.durationStepperBtn}
+                    onPress={() => setActivityDuration(d => String((parseInt(d) || 0) + 1))}
+                  >
+                    <Text style={styles.durationStepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.helperText}>
                   {(() => {
                     const d = parseInt(activityDuration) || 0;
@@ -1709,14 +1832,28 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
                       <View style={styles.formSection}>
                         <Text style={styles.label}>Child Activity Duration (days) *</Text>
-                        <TextInput
-                          style={styles.input}
-                          placeholder="e.g., 3"
-                          placeholderTextColor="#999"
-                          value={childActivityDuration}
-                          onChangeText={setChildActivityDuration}
-                          keyboardType="numeric"
-                        />
+                        <View style={styles.durationStepper}>
+                          <TouchableOpacity
+                            style={styles.durationStepperBtn}
+                            onPress={() => setChildActivityDuration(d => String(Math.max(1, (parseInt(d) || 1) - 1)))}
+                          >
+                            <Text style={styles.durationStepperBtnText}>−</Text>
+                          </TouchableOpacity>
+                          <TextInput
+                            style={styles.durationStepperInput}
+                            value={childActivityDuration}
+                            onChangeText={v => setChildActivityDuration(v.replace(/[^0-9]/g, ''))}
+                            keyboardType="numeric"
+                            textAlign="center"
+                            selectTextOnFocus
+                          />
+                          <TouchableOpacity
+                            style={styles.durationStepperBtn}
+                            onPress={() => setChildActivityDuration(d => String((parseInt(d) || 0) + 1))}
+                          >
+                            <Text style={styles.durationStepperBtnText}>+</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </>
                   )}
@@ -1827,11 +1964,11 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => { setContractorName(''); setShowAddContractorModal(false); }}>
+              <TouchableOpacity onPress={() => { setContractorName(''); setEditingContractorId(null); setShowAddContractorModal(false); }}>
                 <Text style={styles.closeButton}>← Back</Text>
               </TouchableOpacity>
               <Text style={styles.modalTitle}>Contractors</Text>
-              <TouchableOpacity onPress={() => { setContractorName(''); setShowAddContractorModal(false); }}>
+              <TouchableOpacity onPress={() => { setContractorName(''); setEditingContractorId(null); setShowAddContractorModal(false); }}>
                 <Text style={styles.doneButton}>Done</Text>
               </TouchableOpacity>
             </View>
@@ -1848,11 +1985,29 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                   </View>
                 ) : (
                   timechart.subcontractors.map((sub) => (
-                    <View key={sub.id} style={contractorModalStyles.contractorRow}>
+                    <View key={sub.id} style={[
+                      contractorModalStyles.contractorRow,
+                      editingContractorId === sub.id && contractorModalStyles.contractorRowEditing,
+                    ]}>
                       <View style={contractorModalStyles.contractorDot} />
                       <Text style={contractorModalStyles.contractorRowName} numberOfLines={1}>
                         {sub.name}
                       </Text>
+                      {/* Edit button */}
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (user && !canPerformAction(user.role, 'canEdit')) {
+                            Alert.alert('Permission Denied', 'You do not have permission to edit contractors.');
+                            return;
+                          }
+                          setEditingContractorId(sub.id);
+                          setContractorName(sub.name);
+                        }}
+                        style={contractorModalStyles.editButton}
+                      >
+                        <Text style={contractorModalStyles.editButtonText}>✎</Text>
+                      </TouchableOpacity>
+                      {/* Remove button */}
                       <TouchableOpacity
                         onPress={() => {
                           if (user && !canPerformAction(user.role, 'canEdit')) {
@@ -1879,9 +2034,11 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
               <View style={styles.divider} />
 
-              {/* Add new contractor */}
+              {/* Add / Edit contractor */}
               <View style={styles.formSection}>
-                <Text style={styles.label}>Add New Contractor</Text>
+                <Text style={styles.label}>
+                  {editingContractorId ? 'Edit Contractor Name' : 'Add New Contractor'}
+                </Text>
                 <View style={contractorModalStyles.inputRow}>
                   <TextInput
                     style={[styles.input, contractorModalStyles.nameInput]}
@@ -1892,14 +2049,26 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     onSubmitEditing={handleAddContractor}
                     returnKeyType="done"
                   />
+                  {editingContractorId && (
+                    <TouchableOpacity
+                      style={contractorModalStyles.cancelEditButton}
+                      onPress={() => { setEditingContractorId(null); setContractorName(''); }}
+                    >
+                      <Text style={contractorModalStyles.cancelEditButtonText}>✕</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={contractorModalStyles.addButton}
                     onPress={handleAddContractor}
                   >
-                    <Text style={contractorModalStyles.addButtonText}>+ Add</Text>
+                    <Text style={contractorModalStyles.addButtonText}>
+                      {editingContractorId ? 'Save' : '+ Add'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={contractorModalStyles.emptyStateText}>Type a name and tap "+ Add" — you can add as many as you need</Text>
+                {!editingContractorId && (
+                  <Text style={contractorModalStyles.emptyStateText}>Type a name and tap "+ Add" — you can add as many as you need</Text>
+                )}
               </View>
 
               <View style={styles.divider} />
@@ -2881,6 +3050,82 @@ const styles = StyleSheet.create({
     color: '#0066CC',
     fontSize: 12,
     fontWeight: '700',
+  },
+  // Floor filter bar
+  floorFilterBar: {
+    backgroundColor: '#F9F9F9',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+    maxHeight: 48,
+  },
+  floorFilterBarContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  floorFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#CCC',
+    backgroundColor: '#FFF',
+    gap: 5,
+  },
+  floorFilterChipAll: {
+    borderColor: '#0066CC',
+    backgroundColor: '#0066CC',
+  },
+  floorFilterChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  floorFilterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#555',
+  },
+  floorFilterChipTextActive: {
+    color: '#FFF',
+  },
+  // Duration stepper control
+  durationStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    borderRadius: 10,
+    overflow: 'hidden',
+    alignSelf: 'flex-start',
+    minWidth: 160,
+  },
+  durationStepperBtn: {
+    width: 44,
+    height: 44,
+    backgroundColor: '#0066CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  durationStepperBtnText: {
+    color: '#FFF',
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 26,
+  },
+  durationStepperInput: {
+    flex: 1,
+    height: 44,
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0066CC',
+    textAlign: 'center',
+    backgroundColor: '#F0F8FF',
+    paddingHorizontal: 4,
   },
   mailNotificationBar: {
     paddingHorizontal: 16,
