@@ -31,143 +31,167 @@ interface DatePickerFieldProps {
   maxDate?: Date;
 }
 
+const datePickerStyles = StyleSheet.create({
+  container: { marginBottom: 12 },
+  label: { fontSize: 13, fontWeight: '600', color: '#555', marginBottom: 6 },
+  button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    borderRadius: 8,
+    backgroundColor: '#F0F7FF',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 8,
+  },
+  buttonText: { flex: 1, fontSize: 15, color: '#1A1A2E', fontWeight: '500' },
+  calendarIcon: { fontSize: 18 },
+  chevron: { fontSize: 11, color: '#0066CC' },
+  webWrapper: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    borderRadius: 8,
+    backgroundColor: '#F0F7FF',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 8,
+    overflow: 'hidden',
+  },
+  webLabel: { flex: 1, fontSize: 15, color: '#1A1A2E', fontWeight: '500' },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  modalCard: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 30,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEE',
+  },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#1A1A2E' },
+  doneText: { fontSize: 16, color: '#0066CC', fontWeight: '700' },
+});
+
 const DatePickerField: React.FC<DatePickerFieldProps> = ({ label, value, onChange, minDate, maxDate }) => {
   const [showPicker, setShowPicker] = useState(false);
 
-  // Parse current value to a Date for the native picker
-  const parsedDate = value
-    ? (() => { const [y, m, d] = value.split('-').map(Number); return new Date(y, m - 1, d); })()
-    : new Date();
+  const dateValue = value ? new Date(value + 'T12:00:00') : (minDate ?? new Date());
+
+  const handleNativeChange = (_: any, selected?: Date) => {
+    if (Platform.OS === 'android') setShowPicker(false);
+    if (selected) {
+      const y = selected.getFullYear();
+      const m = String(selected.getMonth() + 1).padStart(2, '0');
+      const d = String(selected.getDate()).padStart(2, '0');
+      onChange(`${y}-${m}-${d}`);
+    }
+  };
+
+  const displayText = value
+    ? new Date(value + 'T12:00:00').toLocaleDateString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+      })
+    : 'Tap to choose date…';
 
   if (Platform.OS === 'web') {
-    // On web, use the browser's native date input
+    // On web: render a visible styled button that overlays a transparent
+    // <input type="date"> so clicking anywhere on it opens the browser
+    // calendar — no editable text field visible.
     return (
-      <View>
+      <View style={datePickerStyles.container}>
         <Text style={datePickerStyles.label}>{label}</Text>
-        <View style={datePickerStyles.webInputWrapper}>
+        <View style={datePickerStyles.webWrapper}>
           <Text style={datePickerStyles.calendarIcon}>📅</Text>
+          <Text style={[datePickerStyles.webLabel, !value && { color: '#999' }]}>
+            {displayText}
+          </Text>
+          <Text style={datePickerStyles.chevron}>▼</Text>
+          {/* Transparent date input sits on top — clicking it opens the native browser calendar */}
           <input
             type="date"
             value={value}
             min={minDate ? minDate.toISOString().split('T')[0] : undefined}
             max={maxDate ? maxDate.toISOString().split('T')[0] : undefined}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e: any) => onChange(e.target.value)}
             style={{
-              flex: 1,
-              border: 'none',
-              background: 'transparent',
-              fontSize: 13,
-              color: '#333',
-              outline: 'none',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              width: '100%',
+              height: '100%',
+              opacity: 0,
               cursor: 'pointer',
-            }}
+            } as any}
           />
         </View>
       </View>
     );
   }
 
-  // iOS / Android: show a button that opens a DateTimePicker modal
   return (
-    <View>
+    <View style={datePickerStyles.container}>
       <Text style={datePickerStyles.label}>{label}</Text>
-      <TouchableOpacity style={datePickerStyles.nativeButton} onPress={() => setShowPicker(true)}>
+      <TouchableOpacity style={datePickerStyles.button} onPress={() => setShowPicker(true)} activeOpacity={0.7}>
         <Text style={datePickerStyles.calendarIcon}>📅</Text>
-        <Text style={datePickerStyles.nativeButtonText}>{value || 'Select a date'}</Text>
+        <Text style={[datePickerStyles.buttonText, !value && { color: '#999' }]}>{displayText}</Text>
+        <Text style={datePickerStyles.chevron}>▼</Text>
       </TouchableOpacity>
-      {showPicker && (
+
+      {showPicker && Platform.OS === 'ios' && (
         <Modal transparent animationType="slide">
           <View style={datePickerStyles.modalOverlay}>
-            <View style={datePickerStyles.pickerCard}>
+            <View style={datePickerStyles.modalCard}>
+              <View style={datePickerStyles.modalHeader}>
+                <Text style={datePickerStyles.modalTitle}>{label}</Text>
+                <TouchableOpacity onPress={() => setShowPicker(false)}>
+                  <Text style={datePickerStyles.doneText}>Done</Text>
+                </TouchableOpacity>
+              </View>
               <DateTimePicker
-                value={parsedDate}
+                value={dateValue}
                 mode="date"
-                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                display="inline"
                 minimumDate={minDate}
                 maximumDate={maxDate}
-                onChange={(_event, selectedDate) => {
-                  if (Platform.OS === 'android') setShowPicker(false);
-                  if (selectedDate) {
-                    const y = selectedDate.getFullYear();
-                    const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
-                    const d = String(selectedDate.getDate()).padStart(2, '0');
-                    onChange(`${y}-${m}-${d}`);
-                  }
-                }}
+                onChange={handleNativeChange}
+                style={{ width: '100%' }}
               />
-              <TouchableOpacity style={datePickerStyles.doneButton} onPress={() => setShowPicker(false)}>
-                <Text style={datePickerStyles.doneButtonText}>Done</Text>
-              </TouchableOpacity>
             </View>
           </View>
         </Modal>
+      )}
+
+      {showPicker && Platform.OS === 'android' && (
+        <DateTimePicker
+          value={dateValue}
+          mode="date"
+          display="default"
+          minimumDate={minDate}
+          maximumDate={maxDate}
+          onChange={handleNativeChange}
+        />
       )}
     </View>
   );
 };
 
-const datePickerStyles = StyleSheet.create({
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  webInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#DDD',
-  },
-  calendarIcon: {
-    fontSize: 16,
-    marginRight: 8,
-  },
-  nativeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: '#DDD',
-  },
-  nativeButtonText: {
-    fontSize: 13,
-    color: '#333',
-    flex: 1,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  pickerCard: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingBottom: 20,
-    paddingTop: 8,
-    alignItems: 'center',
-  },
-  doneButton: {
-    marginTop: 12,
-    backgroundColor: '#0066CC',
-    borderRadius: 8,
-    paddingHorizontal: 40,
-    paddingVertical: 10,
-  },
-  doneButtonText: {
-    color: '#FFF',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-});
+
 
 const holidayTypeStyles = StyleSheet.create({
   optionsRow: {
@@ -954,16 +978,19 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         groupedMap.get(groupKey)!.push(activity);
       });
 
-    // Convert to array and sort by first activity's start date
+    // Convert to array and sort by the first activity's original id (insertion order) — NOT by startDate,
+    // so that dragging an activity to an earlier date never re-orders the rows.
     return Array.from(groupedMap.values())
       .map(group => ({
         activities: group.sort((a, b) => (a.floorLevelId || '').localeCompare(b.floorLevelId || '')),
         groupKey: (group[0].subcontractorId || '') + (group[0].name || ''),
+        firstId: group[0].id, // stable sort key
       }))
       .sort((a, b) => {
-        const aStartDate = new Date(a.activities[0].startDate).getTime();
-        const bStartDate = new Date(b.activities[0].startDate).getTime();
-        return aStartDate - bStartDate;
+        // Sort by the index of the first activity in the original timechart.activities array
+        const aIndex = timechart.activities.findIndex(act => act.id === a.firstId);
+        const bIndex = timechart.activities.findIndex(act => act.id === b.firstId);
+        return aIndex - bIndex;
       });
   };
 

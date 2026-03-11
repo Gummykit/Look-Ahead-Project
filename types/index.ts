@@ -83,12 +83,15 @@ export interface ActivityDetailModalData {
 
 export type UserRole = 'contractor' | 'sub-contractor' | 'observer';
 
+// All valid role strings (including legacy — kept for AsyncStorage compat)
+export type AnyRole = UserRole | 'project_manager' | 'owner' | 'admin' | 'viewer';
+
 export interface User {
   id: string;
   username: string;
   email: string;
   password: string; // In production, this should be hashed
-  role: UserRole;
+  role: AnyRole; // AnyRole covers legacy 'owner'/'admin' stored in AsyncStorage
   fullName: string;
   createdAt: Date;
   lastLogin?: Date;

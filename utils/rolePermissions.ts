@@ -9,7 +9,7 @@ import { UserRole, RolePermissions } from '@/types';
  * - Observer: View-only access (can only view timechart, cannot edit)
  */
 
-export const rolePermissions: Record<UserRole, RolePermissions> = {
+export const rolePermissions: Record<string, RolePermissions> = {
   contractor: {
     canEdit: true,
     canDelete: true,
@@ -60,40 +60,59 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
 /**
  * Get permissions for a specific user role
  */
-export function getPermissions(role: UserRole): RolePermissions {
-  return rolePermissions[role];
+export function getPermissions(role: string): RolePermissions {
+  return rolePermissions[role] ?? rolePermissions['observer'];
 }
 
 /**
- * Check if a user can perform a specific action
+ * Check if a user can perform a specific action.
+ * Safely accepts a full User object, a role string, or null/undefined.
  */
-export function canPerformAction(role: UserRole, action: keyof RolePermissions): boolean {
-  const permissions = getPermissions(role);
-  return permissions[action];
+export function canPerformAction(
+  userOrRole: { role?: string } | string | null | undefined,
+  action: string
+): boolean {
+  if (!userOrRole) return false;
+  const role = typeof userOrRole === 'string' ? userOrRole : (userOrRole as any).role;
+  if (!role) return false;
+  const perms = rolePermissions[role as string];
+  if (!perms) {
+    // Unknown legacy role — grant full access rather than crashing
+    return true;
+  }
+  return (perms as any)[action] === true;
 }
 
 /**
  * Get role display name
  */
 export function getRoleDisplayName(role: UserRole): string {
-  const roleNames: Record<UserRole, string> = {
+  const roleNames: Record<string, string> = {
     contractor: 'Contractor',
     'sub-contractor': 'Sub-contractor',
     observer: 'Observer',
+    project_manager: 'Project Manager',
+    owner: 'Owner',
+    admin: 'Admin',
+    viewer: 'Viewer',
   };
-  return roleNames[role];
+  return roleNames[role] ?? role;
 }
 
 /**
  * Get role description
  */
 export function getRoleDescription(role: UserRole): string {
-  const descriptions: Record<UserRole, string> = {
+  const descriptions: Record<string, string> = {
     contractor: 'Full access to create, edit, and delete projects',
     'sub-contractor': 'Full access to manage project timecharts',
     observer: 'View-only access to view project timecharts',
+    project_manager: 'Full access to manage project timecharts',
+    owner: 'Full access to manage all aspects of the project',
+    admin: 'Administrative access to manage users and settings',
+    viewer: 'View-only access to the project',
   };
-  return descriptions[role];
+  return descriptions[role] ?? '';
 }
 
 /**
