@@ -412,6 +412,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     new Date(timechart.startDate).toISOString().split('T')[0]
   );
   const [activityDuration, setActivityDuration] = useState('7');
+  // Multi-contractor selection for Add/Edit Activity modal
+  // (replaces the old single selectedSubcontractor state)
+  const [selectedSubcontractorIds, setSelectedSubcontractorIds] = useState<string[]>([]);
+  // Keep the old single-select state for any legacy paths that still reference it
   const [selectedSubcontractor, setSelectedSubcontractor] = useState<string | null>(
     timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null
   );
@@ -561,9 +565,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    const subcontractor = selectedSubcontractor
-      ? timechart.subcontractors.find(s => s.id === selectedSubcontractor)
-      : undefined;
+    const selectedContractors = selectedSubcontractorIds
+      .map(id => timechart.subcontractors.find(s => s.id === id))
+      .filter(Boolean) as typeof timechart.subcontractors;
+
     const floorLevel = (timechart.floorLevels || []).find(f => f.id === selectedFloorLevel);
 
     if (!floorLevel) {
@@ -571,14 +576,19 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
+    // Primary contractor is the first selected (or empty for Unassigned)
+    const primaryContractor = selectedContractors[0];
+
     onAddActivity({
       name: activityName.trim(),
       description: activityDescription.trim() || undefined,
       startDate: start,
       endDate: end,
       duration: getDaysBetween(start, end),
-      subcontractorId: subcontractor?.id || '',
-      subcontractorName: subcontractor?.name || 'Unassigned',
+      subcontractorId: primaryContractor?.id || '',
+      subcontractorName: primaryContractor?.name || 'Unassigned',
+      subcontractorIds: selectedContractors.map(c => c.id),
+      subcontractorNames: selectedContractors.map(c => c.name),
       floorLevelId: selectedFloorLevel,
       floorLevelName: floorLevel.name,
       floorLevelColor: floorLevel.color,
@@ -591,7 +601,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setActivityDescription('');
     setStartActivityDate(new Date(timechart.startDate).toISOString().split('T')[0]);
     setActivityDuration('7');
-    setSelectedSubcontractor(timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null);
+    setSelectedSubcontractorIds([]);
+    setSelectedSubcontractor(null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
     setInlineNewContractorName('');
     setHasChildActivity(false);
@@ -628,7 +639,12 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       new Date(activity.startDate).toISOString().split('T')[0]
     );
     setActivityDuration(String(getDaysBetween(activity.startDate, activity.endDate)));
-    setSelectedSubcontractor(activity.subcontractorId || null);
+    // Seed multi-select from existing data — prefer the array, fall back to single field
+    const existingIds = activity.subcontractorIds && activity.subcontractorIds.length > 0
+      ? activity.subcontractorIds
+      : (activity.subcontractorId ? [activity.subcontractorId] : []);
+    setSelectedSubcontractorIds(existingIds);
+    setSelectedSubcontractor(existingIds[0] || null);
     setSelectedFloorLevel(activity.floorLevelId || null);
     setHasChildActivity(false);
     setChildActivityName('');
@@ -666,9 +682,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    const subcontractor = selectedSubcontractor
-      ? timechart.subcontractors.find(s => s.id === selectedSubcontractor)
-      : undefined;
+    const selectedContractors = selectedSubcontractorIds
+      .map(id => timechart.subcontractors.find(s => s.id === id))
+      .filter(Boolean) as typeof timechart.subcontractors;
     const floorLevel = (timechart.floorLevels || []).find(f => f.id === selectedFloorLevel);
 
     if (!floorLevel) {
@@ -676,14 +692,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
+    const primaryContractor = selectedContractors[0];
+
     onUpdateActivity(editingActivityId!, {
       name: activityName.trim(),
       description: activityDescription.trim() || undefined,
       startDate: start,
       endDate: end,
       duration: getDaysBetween(start, end),
-      subcontractorId: subcontractor?.id || '',
-      subcontractorName: subcontractor?.name || 'Unassigned',
+      subcontractorId: primaryContractor?.id || '',
+      subcontractorName: primaryContractor?.name || 'Unassigned',
+      subcontractorIds: selectedContractors.map(c => c.id),
+      subcontractorNames: selectedContractors.map(c => c.name),
       floorLevelId: selectedFloorLevel,
       floorLevelName: floorLevel.name,
       floorLevelColor: floorLevel.color,
@@ -695,7 +715,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setActivityDescription('');
     setStartActivityDate(new Date(timechart.startDate).toISOString().split('T')[0]);
     setActivityDuration('7');
-    setSelectedSubcontractor(timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null);
+    setSelectedSubcontractorIds([]);
+    setSelectedSubcontractor(null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
     setInlineNewContractorName('');
     setShowAddActivityModal(false);
@@ -1397,9 +1418,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       const isGrouped = activities.length > 1;
 
       const activityStartDay = getDaysBetween(timechart.startDate, primaryActivity.startDate);
-      const contractorName = timechart.subcontractors.find(
-        c => c.id === primaryActivity.subcontractorId
-      )?.name || 'Unassigned';
+      // Build the contractor display name — show all assigned contractors
+      const resolvedContractorNames = (primaryActivity.subcontractorIds && primaryActivity.subcontractorIds.length > 0
+        ? primaryActivity.subcontractorIds
+            .map(id => timechart.subcontractors.find(c => c.id === id)?.name)
+            .filter(Boolean)
+        : primaryActivity.subcontractorId
+          ? [timechart.subcontractors.find(c => c.id === primaryActivity.subcontractorId)?.name].filter(Boolean)
+          : []
+      ) as string[];
+      const contractorName = resolvedContractorNames.length > 0
+        ? resolvedContractorNames.join(', ')
+        : 'Unassigned';
 
       // Get child activities for this primary activity
       const childActivities = primaryActivity.childActivityIds 
@@ -1941,53 +1971,52 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               </View>
 
               <View style={styles.formSection}>
-                <Text style={styles.label}>Assigned Contractor</Text>
-                <Text style={styles.helperText}>Optional — you can assign a contractor now or later via Edit.</Text>
+                <Text style={styles.label}>Assigned Contractors</Text>
+                <Text style={styles.helperText}>Select one or more contractors. Leave all unchecked for Unassigned.</Text>
                 <View style={styles.pickerContainer}>
-                  {/* Unassigned option — always shown first */}
-                  <TouchableOpacity
-                    style={[
-                      styles.contractorOption,
-                      !selectedSubcontractor && styles.contractorOptionSelected,
-                    ]}
-                    onPress={() => setSelectedSubcontractor(null)}
-                  >
-                    <Text
-                      style={[
-                        styles.contractorOptionText,
-                        { fontStyle: 'italic', color: !selectedSubcontractor ? '#FFF' : '#888' },
-                      ]}
-                    >
-                      Unassigned
-                    </Text>
-                    {!selectedSubcontractor && (
-                      <Text style={styles.checkmark}>✓</Text>
-                    )}
-                  </TouchableOpacity>
+                  {/* Existing contractors — multi-select checkboxes */}
+                  {timechart.subcontractors.length === 0 ? (
+                    <Text style={[styles.noSubcontractorText, { marginBottom: 8 }]}>No contractors yet — add one below.</Text>
+                  ) : (
+                    timechart.subcontractors.map((contractor) => {
+                      const isChecked = selectedSubcontractorIds.includes(contractor.id);
+                      return (
+                        <TouchableOpacity
+                          key={contractor.id}
+                          style={styles.multiContractorRow}
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            setSelectedSubcontractorIds(prev =>
+                              isChecked
+                                ? prev.filter(id => id !== contractor.id)
+                                : [...prev, contractor.id]
+                            );
+                          }}
+                        >
+                          <View style={[styles.multiContractorCheckbox, isChecked && styles.multiContractorCheckboxChecked]}>
+                            {isChecked && <Text style={styles.multiContractorCheckmark}>✓</Text>}
+                          </View>
+                          <Text style={[styles.contractorOptionText, { color: '#333', flex: 1 }]}>
+                            {contractor.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
 
-                  {/* Existing contractors */}
-                  {timechart.subcontractors.map((contractor) => (
-                    <TouchableOpacity
-                      key={contractor.id}
-                      style={[
-                        styles.contractorOption,
-                        selectedSubcontractor === contractor.id && styles.contractorOptionSelected,
-                      ]}
-                      onPress={() => setSelectedSubcontractor(contractor.id)}
-                    >
-                      <Text
-                        style={[
-                          styles.contractorOptionText,
-                          selectedSubcontractor === contractor.id && styles.contractorOptionTextSelected,
-                        ]}
-                      >
-                        {contractor.name}
+                  {/* Selected summary pill */}
+                  {selectedSubcontractorIds.length > 0 && (
+                    <View style={styles.selectedContractorsSummary}>
+                      <Text style={styles.selectedContractorsSummaryText}>
+                        ✓ {selectedSubcontractorIds.length === 1
+                          ? timechart.subcontractors.find(s => s.id === selectedSubcontractorIds[0])?.name || '1 contractor'
+                          : `${selectedSubcontractorIds.length} contractors selected`}
                       </Text>
-                      {selectedSubcontractor === contractor.id && (
-                        <Text style={styles.checkmark}>✓</Text>
-                      )}
-                    </TouchableOpacity>
-                  ))}
+                      <TouchableOpacity onPress={() => setSelectedSubcontractorIds([])}>
+                        <Text style={styles.selectedContractorsClear}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
 
                   {/* Inline add-new-contractor row */}
                   <View style={styles.inlineAddContractorRow}>
@@ -3528,5 +3557,61 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  // Multi-contractor selection styles
+  multiContractorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    backgroundColor: '#FAFAFA',
+    marginBottom: 6,
+    gap: 10,
+  },
+  multiContractorCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: '#0066CC',
+    backgroundColor: '#FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  multiContractorCheckboxChecked: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  multiContractorCheckmark: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  selectedContractorsSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#E8F4E8',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+    marginTop: 2,
+  },
+  selectedContractorsSummaryText: {
+    color: '#2E7D32',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  selectedContractorsClear: {
+    color: '#C62828',
+    fontSize: 12,
+    fontWeight: '600',
+    paddingLeft: 12,
   },
 });

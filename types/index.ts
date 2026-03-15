@@ -31,6 +31,11 @@ export interface Activity {
   duration: number; // in days
   subcontractorId?: string;
   subcontractorName?: string;
+  // Multi-contractor support: when multiple contractors are assigned, these arrays
+  // hold all of them. The single fields above are kept for backward compatibility
+  // and are set to the first contractor in the list.
+  subcontractorIds?: string[];
+  subcontractorNames?: string[];
   floorLevelId: string;
   floorLevelName: string;
   floorLevelColor: string;
