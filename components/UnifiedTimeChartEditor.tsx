@@ -421,6 +421,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
   const [contractorName, setContractorName] = useState('');
   const [editingContractorId, setEditingContractorId] = useState<string | null>(null);
+  // Inline new-contractor entry inside the Add/Edit Activity modal
+  const [inlineNewContractorName, setInlineNewContractorName] = useState('');
   
   // Child activity state
   const [hasChildActivity, setHasChildActivity] = useState(false);
@@ -436,6 +438,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [draggingActivityId, setDraggingActivityId] = useState<string | null>(null);
   const [dragStartX, setDragStartX] = useState(0);
   const [dragActivity, setDragActivity] = useState<Activity | null>(null);
+
+  // Segment-level drag state (for dragging a single floor segment within a grouped block)
+  const [draggingSegmentId, setDraggingSegmentId] = useState<string | null>(null);
+  const [segmentDragStartX, setSegmentDragStartX] = useState(0);
+  const [segmentDragActivity, setSegmentDragActivity] = useState<Activity | null>(null);
+  // Refs mirror the state above so move/release handlers always read the latest
+  // values even when captured inside a stale useMemo closure.
+  const segmentDragActivityRef = React.useRef<Activity | null>(null);
+  const segmentDragStartXRef = React.useRef<number>(0);
+  const draggingSegmentIdRef = React.useRef<string | null>(null);
+  // Long-press timer for segment drag initiation
+  const segmentLongPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Daily activity logging state
   const [showDailyLogModal, setShowDailyLogModal] = useState(false);
@@ -446,6 +460,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   
   // Edit activity state
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+
+  // Floor picker state — shown when editing a grouped row so the user can select which floor to edit
+  const [showFloorPickerForEdit, setShowFloorPickerForEdit] = useState(false);
+  const [floorPickerActivities, setFloorPickerActivities] = useState<Activity[]>([]);
 
   // Floor filter state — null means "show all floors"
   const [activeFloorFilter, setActiveFloorFilter] = useState<string | null>(null);
@@ -518,11 +536,6 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    if (!selectedSubcontractor) {
-      Alert.alert('Error', 'Please select a subcontractor');
-      return;
-    }
-
     if (!selectedFloorLevel) {
       Alert.alert('Error', 'Please select a floor level');
       return;
@@ -548,13 +561,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    const subcontractor = timechart.subcontractors.find(s => s.id === selectedSubcontractor);
+    const subcontractor = selectedSubcontractor
+      ? timechart.subcontractors.find(s => s.id === selectedSubcontractor)
+      : undefined;
     const floorLevel = (timechart.floorLevels || []).find(f => f.id === selectedFloorLevel);
-    
-    if (!subcontractor) {
-      Alert.alert('Error', 'Invalid subcontractor');
-      return;
-    }
 
     if (!floorLevel) {
       Alert.alert('Error', 'Invalid floor level');
@@ -567,8 +577,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       startDate: start,
       endDate: end,
       duration: getDaysBetween(start, end),
-      subcontractorId: selectedSubcontractor,
-      subcontractorName: subcontractor.name,
+      subcontractorId: subcontractor?.id || '',
+      subcontractorName: subcontractor?.name || 'Unassigned',
       floorLevelId: selectedFloorLevel,
       floorLevelName: floorLevel.name,
       floorLevelColor: floorLevel.color,
@@ -583,10 +593,26 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setActivityDuration('7');
     setSelectedSubcontractor(timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
+    setInlineNewContractorName('');
     setHasChildActivity(false);
     setChildActivityName('');
     setChildActivityDuration('1');
     setShowAddActivityModal(false);
+  };
+
+  const handleEditButtonPress = (activities: Activity[]) => {
+    if (user && !canPerformAction(user.role, 'canEdit')) {
+      Alert.alert('Permission Denied', 'You do not have permission to edit activities.');
+      return;
+    }
+    if (activities.length === 1) {
+      // Single floor — open edit form directly
+      handleOpenEditActivity(activities[0]);
+    } else {
+      // Multiple floors — show floor picker first
+      setFloorPickerActivities(activities);
+      setShowFloorPickerForEdit(true);
+    }
   };
 
   const handleOpenEditActivity = (activity: Activity) => {
@@ -602,21 +628,18 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       new Date(activity.startDate).toISOString().split('T')[0]
     );
     setActivityDuration(String(getDaysBetween(activity.startDate, activity.endDate)));
-    setSelectedSubcontractor(activity.subcontractorId);
+    setSelectedSubcontractor(activity.subcontractorId || null);
     setSelectedFloorLevel(activity.floorLevelId || null);
     setHasChildActivity(false);
     setChildActivityName('');
     setChildActivityDuration('1');
+    setInlineNewContractorName('');
     setShowAddActivityModal(true);
   };
 
   const handleSaveEditActivity = () => {
     if (!activityName.trim()) {
       Alert.alert('Error', 'Please enter activity name');
-      return;
-    }
-    if (!selectedSubcontractor) {
-      Alert.alert('Error', 'Please select a subcontractor');
       return;
     }
     if (!selectedFloorLevel) {
@@ -643,11 +666,13 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    const subcontractor = timechart.subcontractors.find(s => s.id === selectedSubcontractor);
+    const subcontractor = selectedSubcontractor
+      ? timechart.subcontractors.find(s => s.id === selectedSubcontractor)
+      : undefined;
     const floorLevel = (timechart.floorLevels || []).find(f => f.id === selectedFloorLevel);
 
-    if (!subcontractor || !floorLevel) {
-      Alert.alert('Error', 'Invalid contractor or floor level');
+    if (!floorLevel) {
+      Alert.alert('Error', 'Invalid floor level');
       return;
     }
 
@@ -657,8 +682,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       startDate: start,
       endDate: end,
       duration: getDaysBetween(start, end),
-      subcontractorId: selectedSubcontractor,
-      subcontractorName: subcontractor.name,
+      subcontractorId: subcontractor?.id || '',
+      subcontractorName: subcontractor?.name || 'Unassigned',
       floorLevelId: selectedFloorLevel,
       floorLevelName: floorLevel.name,
       floorLevelColor: floorLevel.color,
@@ -672,6 +697,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setActivityDuration('7');
     setSelectedSubcontractor(timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
+    setInlineNewContractorName('');
     setShowAddActivityModal(false);
   };
 
@@ -852,6 +878,88 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setDraggingActivityId(null);
     setDragActivity(null);
   };
+
+  // ─── Segment-level drag handlers ───────────────────────────────────────────
+  // These allow dragging one individual floor segment within a grouped block
+  // independently of the other segments.
+  // IMPORTANT: All reads inside move/release use refs (not state) to avoid the
+  // stale-closure problem that arises from useMemo capturing the handlers once.
+
+  const handleSegmentPressIn = (activity: Activity, event: GestureResponderEvent) => {
+    if (user && !canPerformAction(user.role, 'canEditActivity')) {
+      Alert.alert('Permission Denied', 'You do not have permission to edit timechart activities. Your role is view-only.');
+      return;
+    }
+    // Write to refs first (sync), then setState for re-render
+    draggingSegmentIdRef.current = activity.id;
+    segmentDragStartXRef.current = event.nativeEvent.pageX;
+    segmentDragActivityRef.current = activity;
+
+    setDraggingSegmentId(activity.id);
+    setSegmentDragStartX(event.nativeEvent.pageX);
+    setSegmentDragActivity(activity);
+  };
+
+  const handleSegmentPressMove = (event: GestureResponderEvent) => {
+    // Read from refs — always fresh, never stale
+    if (!draggingSegmentIdRef.current || !segmentDragActivityRef.current) return;
+
+    const currentX = event.nativeEvent.pageX;
+    const deltaX = currentX - segmentDragStartXRef.current;
+    const daysDelta = Math.round(deltaX / DAY_WIDTH);
+
+    if (daysDelta === 0) return;
+
+    const current = segmentDragActivityRef.current;
+    const newStartDate = new Date(current.startDate);
+    newStartDate.setDate(newStartDate.getDate() + daysDelta);
+
+    const newEndDate = new Date(current.endDate);
+    newEndDate.setDate(newEndDate.getDate() + daysDelta);
+
+    if (newStartDate < timechart.startDate || newEndDate > timechart.endDate) {
+      return; // Silently clamp — no Alert mid-drag
+    }
+
+    const updated: Activity = { ...current, startDate: newStartDate, endDate: newEndDate };
+
+    // Update ref immediately (sync) so next move event sees the new position
+    segmentDragActivityRef.current = updated;
+    segmentDragStartXRef.current = currentX;
+
+    // Update state to trigger a re-render for visual feedback
+    setSegmentDragActivity(updated);
+    setSegmentDragStartX(currentX);
+  };
+
+  const handleSegmentPressOut = () => {
+    // Read from refs — always fresh
+    const segId = draggingSegmentIdRef.current;
+    const segActivity = segmentDragActivityRef.current;
+
+    if (!segId || !segActivity) {
+      draggingSegmentIdRef.current = null;
+      segmentDragActivityRef.current = null;
+      setDraggingSegmentId(null);
+      setSegmentDragActivity(null);
+      return;
+    }
+
+    onUpdateActivity(segId, {
+      startDate: segActivity.startDate,
+      endDate: segActivity.endDate,
+      duration: getDaysBetween(segActivity.startDate, segActivity.endDate),
+    });
+
+    // Clear refs and state
+    draggingSegmentIdRef.current = null;
+    segmentDragActivityRef.current = null;
+    segmentDragStartXRef.current = 0;
+    setDraggingSegmentId(null);
+    setSegmentDragActivity(null);
+    setSegmentDragStartX(0);
+  };
+  // ────────────────────────────────────────────────────────────────────────────
 
   const handleOpenDailyLog = (activity: Activity, cellDate: Date) => {
     setSelectedActivityForLog(activity);
@@ -1096,13 +1204,34 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     // Calculate end day - add 1 to include the end date itself
     const endDay = displayStartDay + getDaysBetween(displayPrimaryActivity.startDate, displayPrimaryActivity.endDate) + 1;
 
+    // For grouped blocks: build per-activity display info (segment may be independently dragged)
+    const activityDisplayMap = new Map<string, { startDay: number; endDay: number; activity: Activity }>();
+    if (isGrouped) {
+      activitiesArray.forEach(act => {
+        const displayAct = (draggingSegmentId === act.id && segmentDragActivity) ? segmentDragActivity : act;
+        const s = getDaysBetween(timechart.startDate, displayAct.startDate);
+        const e = s + getDaysBetween(displayAct.startDate, displayAct.endDate) + 1;
+        activityDisplayMap.set(act.id, { startDay: s, endDay: e, activity: displayAct });
+      });
+    }
+
     for (let i = 0; i < totalDays; i++) {
       const currentDate = new Date(timechart.startDate);
       currentDate.setDate(currentDate.getDate() + i);
 
       const isHoliday = isNonWorkingDay(currentDate, timechart.nonWorkingDays || timechart.publicHolidays || []);
       const isWeekend = currentDate.getDay() === 0; // Only Sunday is weekend
-      const isActivityDay = i >= displayStartDay && i < endDay;
+
+      // For grouped blocks: a cell is "activity" for any segment that covers day i
+      let isActivityDay: boolean;
+      if (isGrouped) {
+        isActivityDay = activitiesArray.some(act => {
+          const info = activityDisplayMap.get(act.id)!;
+          return i >= info.startDay && i < info.endDay;
+        });
+      } else {
+        isActivityDay = i >= displayStartDay && i < endDay;
+      }
 
       // Show activity indicator only on working days (not holidays, not weekends)
       const shouldShowActivity = isActivityDay && !isHoliday && !isWeekend;
@@ -1134,9 +1263,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 backgroundColor,
               },
             ]}
-            onStartShouldSetResponder={() => true}
-            onMoveShouldSetResponder={() => draggingActivityId === primaryActivity.id}
-            onResponderGrant={(event) => handleActivityPressIn(primaryActivity, event)}
+            onStartShouldSetResponder={() => !isGrouped}
+            onMoveShouldSetResponder={() => !isGrouped && draggingActivityId === primaryActivity.id}
+            onResponderGrant={(event) => !isGrouped && handleActivityPressIn(primaryActivity, event)}
             onResponderMove={handleActivityPressMove}
             onResponderRelease={handleActivityPressOut}
           >
@@ -1145,33 +1274,81 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 {isGrouped ? (
                   // Grouped cell: tile subdivisions OR number count based on view mode
                   groupedCellView === 'tiles' ? (
-                    <View style={[styles.subdivisionContainer, { height: '70%', width: '90%' }]}>
-                      {activitiesArray.map((activity, idx) => {
-                        const isBeingDragged = draggingActivityId === activity.id;
-                        const isFilteredOut = activeFloorFilter !== null && activity.floorLevelId !== activeFloorFilter;
+                    (() => {
+                      // Only consider segments that are actually active (covering day i)
+                      const activeSegments = activitiesArray.filter(act => {
+                        const info = activityDisplayMap.get(act.id)!;
+                        return i >= info.startDay && i < info.endDay;
+                      });
+
+                      if (activeSegments.length === 1) {
+                        // Exactly one segment covers this column — render a plain solid bar
+                        const act = activeSegments[0];
+                        const isBeingSegmentDragged = draggingSegmentId === act.id;
+                        const isFilteredOut = activeFloorFilter !== null && act.floorLevelId !== activeFloorFilter;
                         return (
                           <View
-                            key={`subdivision-${activity.id}`}
                             style={[
-                              styles.subdividedActivityIndicator,
-                              { 
-                                backgroundColor: activity.floorLevelColor,
-                                flex: 1,
-                                opacity: isFilteredOut ? 0.12 : (isBeingDragged ? 0.7 : 1),
+                              styles.activityIndicator,
+                              {
+                                backgroundColor: act.floorLevelColor,
+                                opacity: isFilteredOut ? 0.12 : (isBeingSegmentDragged ? 0.65 : 1),
                               },
-                              idx < activitiesArray.length - 1 && styles.subdividedActivityIndicatorBorder,
-                              activity.isCompleted && styles.completedActivityIndicator,
+                              act.isCompleted && styles.completedActivityIndicator,
+                              isBeingSegmentDragged && styles.subdividedActivityIndicatorDragging,
                             ]}
+                            onStartShouldSetResponder={() => true}
+                            onMoveShouldSetResponder={() => draggingSegmentId === act.id}
+                            onResponderGrant={(event) => handleSegmentPressIn(act, event)}
+                            onResponderMove={handleSegmentPressMove}
+                            onResponderRelease={handleSegmentPressOut}
                           />
                         );
-                      })}
-                    </View>
+                      }
+
+                      // Multiple segments active on this column — render subdivided tiles
+                      return (
+                        <View style={[styles.subdivisionContainer, { height: '70%', width: '90%' }]}>
+                          {activeSegments.map((activity, idx) => {
+                            const isBeingSegmentDragged = draggingSegmentId === activity.id;
+                            const isFilteredOut = activeFloorFilter !== null && activity.floorLevelId !== activeFloorFilter;
+                            return (
+                              <View
+                                key={`subdivision-${activity.id}`}
+                                style={[
+                                  styles.subdividedActivityIndicator,
+                                  {
+                                    backgroundColor: activity.floorLevelColor,
+                                    flex: 1,
+                                    opacity: isFilteredOut ? 0.12 : (isBeingSegmentDragged ? 0.65 : 1),
+                                  },
+                                  idx < activeSegments.length - 1 && styles.subdividedActivityIndicatorBorder,
+                                  activity.isCompleted && styles.completedActivityIndicator,
+                                  isBeingSegmentDragged && styles.subdividedActivityIndicatorDragging,
+                                ]}
+                                onStartShouldSetResponder={() => true}
+                                onMoveShouldSetResponder={() => draggingSegmentId === activity.id}
+                                onResponderGrant={(event) => handleSegmentPressIn(activity, event)}
+                                onResponderMove={handleSegmentPressMove}
+                                onResponderRelease={handleSegmentPressOut}
+                              />
+                            );
+                          })}
+                        </View>
+                      );
+                    })()
                   ) : (
                     // Number view: show count badge
                     (() => {
                       const visibleCount = activeFloorFilter
-                        ? activitiesArray.filter(a => a.floorLevelId === activeFloorFilter).length
-                        : activitiesArray.length;
+                        ? activitiesArray.filter(a => {
+                            const info = activityDisplayMap.get(a.id)!;
+                            return a.floorLevelId === activeFloorFilter && i >= info.startDay && i < info.endDay;
+                          }).length
+                        : activitiesArray.filter(a => {
+                            const info = activityDisplayMap.get(a.id)!;
+                            return i >= info.startDay && i < info.endDay;
+                          }).length;
                       const badgeColor = activeFloorFilter
                         ? (activitiesArray.find(a => a.floorLevelId === activeFloorFilter)?.floorLevelColor ?? primaryActivity.floorLevelColor)
                         : primaryActivity.floorLevelColor;
@@ -1323,7 +1500,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     <Text style={styles.removeActivityText}>✕</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => handleOpenEditActivity(primaryActivity)}
+                    onPress={() => handleEditButtonPress(activities)}
                   >
                     <Text style={styles.editActivityText}>✎</Text>
                   </TouchableOpacity>
@@ -1426,7 +1603,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   // Memoize activity rows to ensure they update when timechart changes
-  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.nonWorkingDays, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity, groupedCellView, activeFloorFilter]);
+  const memoizedActivityRows = useMemo(() => renderActivityRows(), [timechart.activities, timechart.subcontractors, timechart.startDate, timechart.nonWorkingDays, timechart.publicHolidays, timechart.floorLevels, draggingActivityId, dragActivity, groupedCellView, activeFloorFilter, draggingSegmentId, segmentDragActivity]);
 
   return (
     <View style={styles.container}>
@@ -1642,7 +1819,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <Text style={styles.helpText}>💡 Drag activity bars left/right to change dates</Text>
           </View>
           <View style={styles.helpTextRow}>
-            <Text style={styles.helpText}>📝 Long-press an activity bar to log daily work notes & photos</Text>
+            <Text style={styles.helpText}>🎨 In grouped blocks, drag an individual coloured segment to move just that floor independently</Text>
+          </View>
+          <View style={styles.helpTextRow}>
+            <Text style={styles.helpText}>📝 Double-tap an activity bar to log daily work notes & photos</Text>
           </View>
         </View>
       </ScrollView>
@@ -1667,6 +1847,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         animationType="slide"
         onRequestClose={() => {
           setEditingActivityId(null);
+          setInlineNewContractorName('');
           setShowAddActivityModal(false);
         }}
       >
@@ -1675,6 +1856,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={() => {
                 setEditingActivityId(null);
+                setInlineNewContractorName('');
                 setShowAddActivityModal(false);
               }}>
                 <Text style={styles.closeButton}>← Back</Text>
@@ -1759,34 +1941,85 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               </View>
 
               <View style={styles.formSection}>
-                <Text style={styles.label}>Assigned Contractor *</Text>
+                <Text style={styles.label}>Assigned Contractor</Text>
+                <Text style={styles.helperText}>Optional — you can assign a contractor now or later via Edit.</Text>
                 <View style={styles.pickerContainer}>
-                  {timechart.subcontractors.length === 0 ? (
-                    <Text style={styles.noSubcontractorText}>No contractors available. Add one first.</Text>
-                  ) : (
-                    timechart.subcontractors.map((contractor) => (
-                      <TouchableOpacity
-                        key={contractor.id}
+                  {/* Unassigned option — always shown first */}
+                  <TouchableOpacity
+                    style={[
+                      styles.contractorOption,
+                      !selectedSubcontractor && styles.contractorOptionSelected,
+                    ]}
+                    onPress={() => setSelectedSubcontractor(null)}
+                  >
+                    <Text
+                      style={[
+                        styles.contractorOptionText,
+                        { fontStyle: 'italic', color: !selectedSubcontractor ? '#FFF' : '#888' },
+                      ]}
+                    >
+                      Unassigned
+                    </Text>
+                    {!selectedSubcontractor && (
+                      <Text style={styles.checkmark}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  {/* Existing contractors */}
+                  {timechart.subcontractors.map((contractor) => (
+                    <TouchableOpacity
+                      key={contractor.id}
+                      style={[
+                        styles.contractorOption,
+                        selectedSubcontractor === contractor.id && styles.contractorOptionSelected,
+                      ]}
+                      onPress={() => setSelectedSubcontractor(contractor.id)}
+                    >
+                      <Text
                         style={[
-                          styles.contractorOption,
-                          selectedSubcontractor === contractor.id && styles.contractorOptionSelected,
+                          styles.contractorOptionText,
+                          selectedSubcontractor === contractor.id && styles.contractorOptionTextSelected,
                         ]}
-                        onPress={() => setSelectedSubcontractor(contractor.id)}
                       >
-                        <Text
-                          style={[
-                            styles.contractorOptionText,
-                            selectedSubcontractor === contractor.id && styles.contractorOptionTextSelected,
-                          ]}
-                        >
-                          {contractor.name}
-                        </Text>
-                        {selectedSubcontractor === contractor.id && (
-                          <Text style={styles.checkmark}>✓</Text>
-                        )}
-                      </TouchableOpacity>
-                    ))
-                  )}
+                        {contractor.name}
+                      </Text>
+                      {selectedSubcontractor === contractor.id && (
+                        <Text style={styles.checkmark}>✓</Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+
+                  {/* Inline add-new-contractor row */}
+                  <View style={styles.inlineAddContractorRow}>
+                    <TextInput
+                      style={styles.inlineAddContractorInput}
+                      placeholder="New contractor name…"
+                      placeholderTextColor="#aaa"
+                      value={inlineNewContractorName}
+                      onChangeText={setInlineNewContractorName}
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        const name = inlineNewContractorName.trim();
+                        if (!name) return;
+                        onAddSubcontractor(name);
+                        setInlineNewContractorName('');
+                      }}
+                    />
+                    <TouchableOpacity
+                      style={styles.inlineAddContractorBtn}
+                      onPress={() => {
+                        const name = inlineNewContractorName.trim();
+                        if (!name) {
+                          Alert.alert('Error', 'Please enter a contractor name');
+                          return;
+                        }
+                        onAddSubcontractor(name);
+                        setInlineNewContractorName('');
+                      }}
+                    >
+                      <Text style={styles.inlineAddContractorBtnText}>＋ Add</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
 
@@ -1888,6 +2121,60 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               )}
 
               <View style={styles.divider} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Floor Picker Modal — shown when editing a grouped row with multiple floors */}
+      <Modal
+        visible={showFloorPickerForEdit}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFloorPickerForEdit(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[styles.modalContent, { maxHeight: '60%' }]}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowFloorPickerForEdit(false)}>
+                <Text style={styles.closeButton}>← Back</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Select Floor to Edit</Text>
+              <View style={{ width: 60 }} />
+            </View>
+            <ScrollView style={styles.formContainer}>
+              <View style={styles.formSection}>
+                <Text style={[styles.helperText, { marginBottom: 8 }]}>
+                  This activity spans multiple floors. Choose the floor level you want to edit.
+                </Text>
+                {floorPickerActivities.map((act) => (
+                  <TouchableOpacity
+                    key={act.id}
+                    style={[styles.contractorOption, { flexDirection: 'row', alignItems: 'center', marginBottom: 8 }]}
+                    onPress={() => {
+                      setShowFloorPickerForEdit(false);
+                      // Small delay so the floor picker closes before the edit modal opens
+                      setTimeout(() => handleOpenEditActivity(act), 150);
+                    }}
+                  >
+                    <View
+                      style={[
+                        styles.contractorOptionColor,
+                        { backgroundColor: act.floorLevelColor, width: 18, height: 18, borderRadius: 9, marginRight: 10 },
+                      ]}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.contractorOptionText}>{act.floorLevelName || 'Unknown Floor'}</Text>
+                      <Text style={[styles.helperText, { fontSize: 11 }]}>
+                        {new Date(act.startDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {' → '}
+                        {new Date(act.endDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 18, color: '#666' }}>›</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </ScrollView>
           </View>
         </View>
@@ -3039,6 +3326,15 @@ const styles = StyleSheet.create({
     borderRightWidth: 0,
     borderBottomWidth: 0,
   },
+  subdividedActivityIndicatorDragging: {
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.85)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 4,
+  },
   subdividedActivityIndicatorBorder: {
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0, 0, 0, 0.15)',
@@ -3202,6 +3498,34 @@ const styles = StyleSheet.create({
   },
   inlineAddActivityButtonText: {
     color: '#0066CC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  inlineAddContractorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 8,
+  },
+  inlineAddContractorInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#DDD',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#333',
+    backgroundColor: '#FAFAFA',
+  },
+  inlineAddContractorBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#0066CC',
+  },
+  inlineAddContractorBtnText: {
+    color: '#FFF',
     fontSize: 13,
     fontWeight: '700',
   },

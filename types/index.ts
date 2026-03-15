@@ -29,8 +29,8 @@ export interface Activity {
   startDate: Date;
   endDate: Date;
   duration: number; // in days
-  subcontractorId: string;
-  subcontractorName: string;
+  subcontractorId?: string;
+  subcontractorName?: string;
   floorLevelId: string;
   floorLevelName: string;
   floorLevelColor: string;
