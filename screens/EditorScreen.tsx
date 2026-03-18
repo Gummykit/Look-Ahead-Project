@@ -25,6 +25,22 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
     loadTimechart();
   }, []);
 
+  // Auto-save timechart whenever it changes (debounced to avoid excessive writes)
+  useEffect(() => {
+    if (!timechart) return;
+    
+    const timer = setTimeout(async () => {
+      try {
+        await saveTimechart(timechart);
+        console.log('✅ Timechart auto-saved');
+      } catch (error) {
+        console.error('❌ Auto-save failed:', error);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timer);
+  }, [timechart]);
+
   const loadTimechart = async () => {
     setLoading(true);
     const data = await getTimechart(timechartId);
@@ -89,6 +105,16 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
     });
   };
 
+  const handleUpdateSubcontractor = (id: string, name: string) => {
+    if (!timechart) return;
+    setTimechart({
+      ...timechart,
+      subcontractors: timechart.subcontractors.map(s =>
+        s.id === id ? { ...s, name } : s
+      ),
+    });
+  };
+
   const handleRemoveSubcontractor = (id: string) => {
     if (!timechart) return;
     setTimechart({
@@ -100,41 +126,53 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
 
   const handleAddActivity = (activity: any) => {
     if (!timechart) return;
-    
-    const parentActivityId = Math.random().toString(36).substr(2, 9);
-    const newActivities = [
-      ...timechart.activities,
-      {
-        ...activity,
-        id: parentActivityId,
-        sequenceOrder: timechart.activities.length + 1,
-        childActivityIds: activity.childDuration ? [Math.random().toString(36).substr(2, 9)] : [],
-      },
-    ];
-    
-    // If child activity requested, create it
-    if (activity.childDuration && activity.childActivityName) {
-      const childActivityId = newActivities[newActivities.length - 1].childActivityIds?.[0];
-      const childStartDate = new Date(activity.endDate);
-      childStartDate.setDate(childStartDate.getDate() + 1); // Start day after parent ends
-      const childEndDate = new Date(childStartDate);
-      childEndDate.setDate(childEndDate.getDate() + (activity.childDuration - 1));
-      
-      newActivities.push({
-        ...activity,
-        id: childActivityId,
-        name: activity.childActivityName,
-        startDate: childStartDate,
-        endDate: childEndDate,
-        duration: activity.childDuration,
-        parentActivityId: parentActivityId,
-        sequenceOrder: newActivities.length + 1,
-      });
-    }
-    
-    setTimechart({
-      ...timechart,
-      activities: newActivities,
+
+    // Use the pre-generated ID from the component if provided, otherwise generate one.
+    const activityId = activity.id || Math.random().toString(36).substr(2, 9);
+
+    setTimechart(prev => {
+      if (!prev) return prev;
+      // Avoid duplicates — if this ID already exists (e.g. a linked activity added
+      // after the parent in the same batch), just append without re-inserting.
+      if (prev.activities.some(a => a.id === activityId)) return prev;
+      return {
+        ...prev,
+        activities: [
+          ...prev.activities,
+          {
+            ...activity,
+            id: activityId,
+            sequenceOrder: prev.activities.length + 1,
+            // Ensure arrays are always present
+            childActivityIds: activity.childActivityIds ?? [],
+          },
+        ],
+      };
+    });
+  };
+
+  // Batch-add multiple activities (parent + linked) in a single state update so that
+  // React batching doesn't cause intermediate updaters to overwrite each other.
+  const handleAddActivities = (activities: any[]) => {
+    if (!timechart) return;
+    console.log('🔵 [EditorScreen] handleAddActivities called with:', activities.length, 'activities');
+    setTimechart(prev => {
+      if (!prev) return prev;
+      const existingIds = new Set(prev.activities.map(a => a.id));
+      const toAdd = activities
+        .filter(a => !existingIds.has(a.id))
+        .map((a, i) => ({
+          ...a,
+          id: a.id || Math.random().toString(36).substr(2, 9),
+          sequenceOrder: prev.activities.length + 1 + i,
+          childActivityIds: a.childActivityIds ?? [],
+        }));
+      console.log('🔵 [EditorScreen] After filtering, adding:', toAdd.length, 'activities');
+      console.log('🔵 [EditorScreen] Activities to add:', toAdd.map(a => ({ id: a.id, name: a.name, parentId: a.parentActivityId, childIds: a.childActivityIds })));
+      if (toAdd.length === 0) return prev;
+      const newState = { ...prev, activities: [...prev.activities, ...toAdd] };
+      console.log('🔵 [EditorScreen] New total activities:', newState.activities.length);
+      return newState;
     });
   };
 
@@ -355,7 +393,9 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
         onRemoveNonWorkingDay={handleRemoveHoliday}
         onAddSubcontractor={handleAddSubcontractor}
         onRemoveSubcontractor={handleRemoveSubcontractor}
+        onUpdateSubcontractor={handleUpdateSubcontractor}
         onAddActivity={handleAddActivity}
+        onAddActivities={handleAddActivities}
         onUpdateActivity={handleUpdateActivity}
         onBatchUpdateActivities={handleBatchUpdateActivities}
         onRemoveActivity={handleRemoveActivity}

@@ -43,10 +43,8 @@ export interface Activity {
   sequenceOrder: number;
   isStarted?: boolean; // Marks activity as started with a small green tick
   isCompleted?: boolean; // Marks activity as complete with strikethrough
-  parentActivityId?: string; // ID of parent activity if this is a child activity
-  childActivityIds?: string[]; // Array of child activity IDs
-  childDuration?: number; // Duration of child activity in days
-  childActivityName?: string; // Name of child activity (temporary, used during creation)
+  parentActivityId?: string; // ID of parent activity if this is a linked (child) activity
+  childActivityIds?: string[]; // Array of linked activity IDs (children)
 }
 
 export interface DailyActivityLog {

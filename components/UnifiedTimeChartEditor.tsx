@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -355,6 +355,8 @@ interface UnifiedTimeChartEditorProps {
   onRemoveSubcontractor: (id: string) => void;
   onUpdateSubcontractor: (id: string, name: string) => void;
   onAddActivity: (activity: any) => void;
+  /** Batch-add multiple activities in a single state update (used for parent + linked activities). */
+  onAddActivities?: (activities: any[]) => void;
   onRemoveActivity: (id: string) => void;
   onUpdateActivity: (id: string, activity: any) => void;
   onBatchUpdateActivities?: (updates: Array<{ id: string; changes: any }>) => void;
@@ -376,6 +378,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   onRemoveSubcontractor,
   onUpdateSubcontractor,
   onAddActivity,
+  onAddActivities,
   onRemoveActivity,
   onUpdateActivity,
   onBatchUpdateActivities,
@@ -427,11 +430,35 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [editingContractorId, setEditingContractorId] = useState<string | null>(null);
   // Inline new-contractor entry inside the Add/Edit Activity modal
   const [inlineNewContractorName, setInlineNewContractorName] = useState('');
-  
-  // Child activity state
-  const [hasChildActivity, setHasChildActivity] = useState(false);
-  const [childActivityName, setChildActivityName] = useState('');
-  const [childActivityDuration, setChildActivityDuration] = useState('1');
+
+  // ── Linked Activities state ────────────────────────────────────────────────
+  // Each entry is a pending linked activity to be created alongside the parent.
+  interface LinkedActivityEntry {
+    id: string; // temp key for the list
+    name: string;
+    offsetDays: number; // offset from parent end date (+1 = 1 day after, -1 = 1 day before, etc.)
+    duration: number; // duration in days
+    floorLevelId: string;
+    subcontractorIds: string[];
+  }
+  const [linkedActivities, setLinkedActivities] = useState<LinkedActivityEntry[]>([]);
+  // Ref to hold the latest linkedActivities value (avoids stale closure in handleAddActivity)
+  const linkedActivitiesRef = useRef<LinkedActivityEntry[]>([]);
+  // Keep ref in sync with state
+  useEffect(() => {
+    linkedActivitiesRef.current = linkedActivities;
+  }, [linkedActivities]);
+  // State for the currently-open "Add Linked Activity" inline form (-1 = none)
+  const [addingLinkedActivityIndex, setAddingLinkedActivityIndex] = useState<number | null>(null);
+  // Form state for the linked activity being drafted
+  const [linkedName, setLinkedName] = useState('');
+  const [linkedOffsetDays, setLinkedOffsetDays] = useState(1);
+  const [linkedCustomOffset, setLinkedCustomOffset] = useState('');
+  const [linkedUseCustomOffset, setLinkedUseCustomOffset] = useState(false);
+  const [linkedDuration, setLinkedDuration] = useState('7');
+  const [linkedFloorLevelId, setLinkedFloorLevelId] = useState<string>('');
+  const [linkedSubcontractorIds, setLinkedSubcontractorIds] = useState<string[]>([]);
+  // ──────────────────────────────────────────────────────────────────────────
   
   // Floor level management state
   const [floorLevelName, setFloorLevelName] = useState('');
@@ -535,6 +562,54 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
+    // If the linked-activity inline form is still open, auto-confirm it before saving
+    // so the user's entered data isn't silently lost when they press "Done".
+    if (addingLinkedActivityIndex !== null) {
+      if (!linkedName.trim()) {
+        Alert.alert('Error', 'Please enter a name for the linked activity, or cancel it before saving.');
+        return;
+      }
+      if (!linkedFloorLevelId) {
+        Alert.alert('Error', 'Please select a floor level for the linked activity, or cancel it before saving.');
+        return;
+      }
+      const offsetVal = linkedUseCustomOffset ? (parseInt(linkedCustomOffset) || 1) : linkedOffsetDays;
+      const durationVal = parseInt(linkedDuration) || 1;
+      const autoEntry: LinkedActivityEntry = {
+        id: `linked-${Date.now()}-${Math.random()}`,
+        name: linkedName.trim(),
+        offsetDays: offsetVal,
+        duration: durationVal,
+        floorLevelId: linkedFloorLevelId,
+        subcontractorIds: linkedSubcontractorIds,
+      };
+      // Use updated list directly in this call (state update is async so we can't rely on it)
+      const allLinked = [...linkedActivities, autoEntry];
+
+      // Reset inline form state
+      setAddingLinkedActivityIndex(null);
+      setLinkedName('');
+      setLinkedOffsetDays(1);
+      setLinkedCustomOffset('');
+      setLinkedUseCustomOffset(false);
+      setLinkedDuration('7');
+      setLinkedFloorLevelId('');
+      setLinkedSubcontractorIds([]);
+
+      // Continue submission with the auto-confirmed list
+      // (call a helper that accepts the list directly, bypassing the stale closure)
+      _submitActivity(allLinked);
+      return;
+    }
+
+    // Read from ref to get the latest value (avoids stale closure from async setState)
+    console.log('🟢 [Add] Using linkedActivitiesRef.current with length:', linkedActivitiesRef.current.length);
+    _submitActivity(linkedActivitiesRef.current);
+  };
+
+  // Internal helper — separated so that auto-confirm can pass the fresh linked list
+  // without waiting for setState to flush.
+  const _submitActivity = (confirmedLinked: LinkedActivityEntry[]) => {
     if (!activityName.trim()) {
       Alert.alert('Error', 'Please enter activity name');
       return;
@@ -579,7 +654,94 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     // Primary contractor is the first selected (or empty for Unassigned)
     const primaryContractor = selectedContractors[0];
 
-    onAddActivity({
+    const genId = () => Math.random().toString(36).substr(2, 9);
+    const parentId = genId();
+
+    // Build each linked activity object FIRST so we know exactly which ones
+    // succeeded (floor-level lookup can theoretically fail). Then set
+    // childActivityIds on the parent to match only the built objects.
+    const linkedActivityObjs: any[] = [];
+    const projectEnd = new Date(timechart.endDate);
+    projectEnd.setHours(0, 0, 0, 0);
+
+    console.log('🔵 [Add] confirmedLinked array:', confirmedLinked.map(l => ({ 
+      name: l.name, 
+      floorLevelId: l.floorLevelId,
+      offsetDays: l.offsetDays,
+      duration: l.duration 
+    })));
+    console.log('🔵 [Add] Available floor levels:', (timechart.floorLevels || []).map(f => ({ id: f.id, name: f.name })));
+
+    confirmedLinked.forEach((linked) => {
+      const linkedFloor = (timechart.floorLevels || []).find(f => f.id === linked.floorLevelId);
+      console.log('🔵 [Add] Looking for floor level:', linked.floorLevelId, '- Found:', linkedFloor ? linkedFloor.name : 'NOT FOUND');
+      if (!linkedFloor) {
+        // Floor level was deleted between when the form was filled and now — skip with a warning.
+        console.log('🔴 [Add] Floor level not found! Linked activity will be skipped:', linked.name);
+        Alert.alert('Warning', `Could not find floor level for linked activity "${linked.name}". It will be skipped.`);
+        return;
+      }
+
+      // linkedStart = parent end date + offsetDays
+      const linkedStart = new Date(end);
+      linkedStart.setDate(linkedStart.getDate() + linked.offsetDays);
+      linkedStart.setHours(0, 0, 0, 0);
+
+      // Clamp linkedStart to project bounds
+      const projectStart = new Date(timechart.startDate);
+      projectStart.setHours(0, 0, 0, 0);
+      if (linkedStart < projectStart) {
+        linkedStart.setTime(projectStart.getTime());
+      }
+      if (linkedStart > projectEnd) {
+        Alert.alert(
+          'Warning',
+          `Linked activity "${linked.name}" starts after the project end date and will not be visible on the chart. Please adjust its offset or the parent activity's dates.`
+        );
+        // Still add it so it exists in the data — user can edit later
+        linkedStart.setTime(projectEnd.getTime());
+      }
+
+      const linkedEnd = new Date(linkedStart);
+      linkedEnd.setDate(linkedEnd.getDate() + linked.duration - 1);
+      linkedEnd.setHours(0, 0, 0, 0);
+
+      // Clamp linkedEnd to project end
+      if (linkedEnd > projectEnd) {
+        linkedEnd.setTime(projectEnd.getTime());
+      }
+
+      const linkedContractors = linked.subcontractorIds
+        .map(id => timechart.subcontractors.find(s => s.id === id))
+        .filter(Boolean) as typeof timechart.subcontractors;
+      const linkedPrimary = linkedContractors[0];
+
+      const linkedObj = {
+        id: genId(), // generate ID per-built-object so no phantom IDs in childActivityIds
+        name: linked.name,
+        startDate: linkedStart,
+        endDate: linkedEnd,
+        duration: getDaysBetween(linkedStart, linkedEnd),
+        subcontractorId: linkedPrimary?.id || '',
+        subcontractorName: linkedPrimary?.name || 'Unassigned',
+        subcontractorIds: linkedContractors.map(c => c.id),
+        subcontractorNames: linkedContractors.map(c => c.name),
+        floorLevelId: linkedFloor.id,
+        floorLevelName: linkedFloor.name,
+        floorLevelColor: linkedFloor.color,
+        parentActivityId: parentId,
+        childActivityIds: [],
+      };
+      linkedActivityObjs.push(linkedObj);
+      console.log('🟢 [Add] Pushed linked activity object. Array length now:', linkedActivityObjs.length);
+    });
+
+    console.log('🔵 [Add] After forEach, linkedActivityObjs.length:', linkedActivityObjs.length);
+    console.log('🔵 [Add] onAddActivities prop exists?', typeof onAddActivities, onAddActivities ? 'YES' : 'NO');
+
+    // Build parent AFTER linked objects so childActivityIds is exact (no phantom IDs)
+    const parentActivityObj = {
+      id: parentId,
       name: activityName.trim(),
       description: activityDescription.trim() || undefined,
       startDate: start,
@@ -592,10 +754,24 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       floorLevelId: selectedFloorLevel,
       floorLevelName: floorLevel.name,
       floorLevelColor: floorLevel.color,
-      childActivityIds: [],
-      childDuration: hasChildActivity ? parseInt(childActivityDuration) || 1 : undefined,
-      childActivityName: hasChildActivity ? childActivityName.trim() : undefined,
-    });
+      childActivityIds: linkedActivityObjs.map(l => l.id), // only real, built IDs
+    };
+
+    // Use batch add when linked activities exist to avoid React batching dropping intermediate state.
+    // All activities are inserted in a single setTimechart call in EditorScreen.
+    if (linkedActivityObjs.length > 0 && onAddActivities) {
+      console.log('🟢 [Add] Calling onAddActivities with:', {
+        parentId: parentActivityObj.id,
+        parentName: parentActivityObj.name,
+        parentChildIds: parentActivityObj.childActivityIds,
+        linkedCount: linkedActivityObjs.length,
+        linkedDetails: linkedActivityObjs.map(l => ({ id: l.id, name: l.name, parentId: l.parentActivityId })),
+      });
+      onAddActivities([parentActivityObj, ...linkedActivityObjs]);
+    } else {
+      console.log('🟡 [Add] Calling onAddActivity (no linked activities)');
+      onAddActivity(parentActivityObj);
+    }
 
     setActivityName('');
     setActivityDescription('');
@@ -605,9 +781,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setSelectedSubcontractor(null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
     setInlineNewContractorName('');
-    setHasChildActivity(false);
-    setChildActivityName('');
-    setChildActivityDuration('1');
+    setLinkedActivities([]);
+    setAddingLinkedActivityIndex(null);
     setShowAddActivityModal(false);
   };
 
@@ -646,9 +821,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setSelectedSubcontractorIds(existingIds);
     setSelectedSubcontractor(existingIds[0] || null);
     setSelectedFloorLevel(activity.floorLevelId || null);
-    setHasChildActivity(false);
-    setChildActivityName('');
-    setChildActivityDuration('1');
+    setLinkedActivities([]); // Linked activities are not shown/edited in edit mode
+    setAddingLinkedActivityIndex(null);
     setInlineNewContractorName('');
     setShowAddActivityModal(true);
   };
@@ -1110,11 +1284,16 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     // Convert to array and sort by the first activity's original id (insertion order) — NOT by startDate,
     // so that dragging an activity to an earlier date never re-orders the rows.
     return Array.from(groupedMap.values())
-      .map(group => ({
-        activities: group.sort((a, b) => (a.floorLevelId || '').localeCompare(b.floorLevelId || '')),
-        groupKey: (group[0].subcontractorId || '') + (group[0].name || ''),
-        firstId: group[0].id, // stable sort key
-      }))
+      .map(group => {
+        // Capture the first-inserted ID BEFORE sorting the group by floorLevelId,
+        // so the stable sort key always refers to the original insertion order.
+        const firstId = group[0].id;
+        return {
+          activities: group.sort((a, b) => (a.floorLevelId || '').localeCompare(b.floorLevelId || '')),
+          groupKey: (group[0].subcontractorId || '') + (group[0].name || ''),
+          firstId,
+        };
+      })
       .sort((a, b) => {
         // Sort by the index of the first activity in the original timechart.activities array
         const aIndex = timechart.activities.findIndex(act => act.id === a.firstId);
@@ -1431,10 +1610,24 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         ? resolvedContractorNames.join(', ')
         : 'Unassigned';
 
-      // Get child activities for this primary activity
-      const childActivities = primaryActivity.childActivityIds 
-        ? timechart.activities.filter(a => primaryActivity.childActivityIds?.includes(a.id))
-        : [];
+      // Get linked activities for this primary activity group.
+      // Check ALL activities in the group (not just primaryActivity) since the floor-level
+      // sort inside groupActivitiesByNameAndContractor may put the real parent at index > 0.
+      const groupActivityIds = new Set(activities.map(a => a.id));
+      const linkedActivityRows = timechart.activities.filter(a =>
+        // linked → parent reference
+        (a.parentActivityId && groupActivityIds.has(a.parentActivityId)) ||
+        // parent → linked reference (any activity in the group lists this activity as a child)
+        activities.some(parent => parent.childActivityIds && parent.childActivityIds.includes(a.id))
+      );
+
+      if (linkedActivityRows.length > 0) {
+        console.log('🟣 [Render] Found', linkedActivityRows.length, 'linked activities for group:', {
+          groupKey: group.groupKey,
+          parentIds: Array.from(groupActivityIds),
+          linkedActivities: linkedActivityRows.map(l => ({ id: l.id, name: l.name, parentId: l.parentActivityId })),
+        });
+      }
 
       // For grouped rows: row is "active" if ANY activity matches the floor filter
       const rowMatchesFilter = activeFloorFilter === null ||
@@ -1542,87 +1735,92 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               </View>
             </View>
 
-            {/* Child Activity Rows */}
-            {childActivities.map((childActivity) => {
-              const childStartDay = getDaysBetween(timechart.startDate, childActivity.startDate);
+            {/* Linked Activity Rows — appear directly below the parent */}
+            {linkedActivityRows.map((linkedActivity) => {
+              const linkedStartDay = getDaysBetween(timechart.startDate, linkedActivity.startDate);
+              const linkedContractorNames = (linkedActivity.subcontractorIds && linkedActivity.subcontractorIds.length > 0
+                ? linkedActivity.subcontractorIds.map(id => timechart.subcontractors.find(c => c.id === id)?.name).filter(Boolean)
+                : linkedActivity.subcontractorId
+                  ? [timechart.subcontractors.find(c => c.id === linkedActivity.subcontractorId)?.name].filter(Boolean)
+                  : []
+              ) as string[];
+              const linkedContractorName = linkedContractorNames.length > 0
+                ? linkedContractorNames.join(', ')
+                : 'Unassigned';
               return (
-                <View key={`activity-${childActivity.id}`} style={[styles.activityRowContainer, styles.childActivityRow]}>
+                <View key={`linked-${linkedActivity.id}`} style={[styles.activityRowContainer, styles.linkedActivityRow]}>
                   <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
-                    <Text 
+                    <Text
                       style={[
                         styles.activityCellText,
-                        styles.childActivityCellText,
-                        childActivity.isCompleted && styles.completedActivityCellText
-                      ]} 
+                        styles.linkedActivityCellText,
+                        linkedActivity.isCompleted && styles.completedActivityCellText
+                      ]}
                       numberOfLines={2}
                     >
-                      ↳ {childActivity.name}
+                      ↳ {linkedActivity.name}
                     </Text>
                   </View>
 
                   <View style={[styles.cell, styles.contractorCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
-                    {/* Name row */}
                     <View style={styles.contractorNameRow}>
                       <View
                         style={[
                           styles.contractorColorDot,
-                          { backgroundColor: childActivity.floorLevelColor, opacity: 0.6 },
+                          { backgroundColor: linkedActivity.floorLevelColor, opacity: 0.75 },
                         ]}
                       />
                       <Text style={styles.contractorCellText} numberOfLines={1}>
-                        {contractorName}
+                        {linkedContractorName}
                       </Text>
                     </View>
-                    {/* Action buttons row */}
                     <View style={styles.contractorActionsRow}>
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => {
                           if (user && !canPerformAction(user.role, 'canMarkActivityComplete')) {
                             Alert.alert('Permission Denied', 'You do not have permission to mark activities as complete.');
                             return;
                           }
-                          handleToggleActivityCompletion(childActivity.id);
+                          handleToggleActivityCompletion(linkedActivity.id);
                         }}
                       >
-                        <Text style={[styles.completeActivityText, childActivity.isCompleted && styles.completeActivityTextActive]}>
+                        <Text style={[styles.completeActivityText, linkedActivity.isCompleted && styles.completeActivityTextActive]}>
                           ✓
                         </Text>
                       </TouchableOpacity>
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => {
                           if (user && !canPerformAction(user.role, 'canMarkActivityStarted')) {
                             Alert.alert('Permission Denied', 'You do not have permission to mark activities as started.');
                             return;
                           }
-                          handleToggleActivityStarted(childActivity.id);
+                          handleToggleActivityStarted(linkedActivity.id);
                         }}
-                        style={[styles.startedButton, childActivity.isStarted && styles.startedButtonActive]}
+                        style={[styles.startedButton, linkedActivity.isStarted && styles.startedButtonActive]}
                       >
-                        <Text style={[styles.startedButtonText, childActivity.isStarted && styles.startedButtonTextActive]}>
-                          {childActivity.isStarted ? 'Started' : 'Start'}
+                        <Text style={[styles.startedButtonText, linkedActivity.isStarted && styles.startedButtonTextActive]}>
+                          {linkedActivity.isStarted ? 'Started' : 'Start'}
                         </Text>
                       </TouchableOpacity>
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => {
                           if (user && !canPerformAction(user.role, 'canDeleteActivity')) {
                             Alert.alert('Permission Denied', 'You do not have permission to delete activities.');
                             return;
                           }
-                          onRemoveActivity(primaryActivity.id);
+                          onRemoveActivity(linkedActivity.id);
                         }}
                       >
                         <Text style={styles.removeActivityText}>✕</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => handleOpenEditActivity(childActivity)}
-                      >
+                      <TouchableOpacity onPress={() => handleOpenEditActivity(linkedActivity)}>
                         <Text style={styles.editActivityText}>✎</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
 
                   <View style={styles.chartArea}>
-                    {renderDateCells(childActivity, childStartDay)}
+                    {renderDateCells(linkedActivity, linkedStartDay)}
                   </View>
                 </View>
               );
@@ -2090,64 +2288,294 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 </View>
               </View>
 
-              {/* Child Activity Section — only shown when adding a new activity */}
+              {/* ── Linked Activities Section — only shown when adding a new activity ── */}
               {!editingActivityId && (
-                <>
-                  <View style={styles.formSection}>
-                    <View style={styles.childActivityToggleContainer}>
-                      <TouchableOpacity
-                        style={[styles.checkboxSquare, hasChildActivity && styles.checkboxSquareChecked]}
-                        onPress={() => setHasChildActivity(!hasChildActivity)}
-                      >
-                        {hasChildActivity && <Text style={styles.checkboxCheckmark}>✓</Text>}
-                      </TouchableOpacity>
-                      <Text style={styles.label}>Add Child Activity (Optional)</Text>
-                    </View>
-                  </View>
+                <View style={styles.formSection}>
+                  <Text style={styles.label}>Linked Activities</Text>
+                  <Text style={styles.helperText}>
+                    Add follow-on activities that are linked to this one. Each linked activity appears directly below in the timechart.
+                  </Text>
 
-                  {hasChildActivity && (
-                    <>
-                      <View style={styles.formSection}>
-                        <Text style={styles.label}>Child Activity Name *</Text>
+                  {/* Existing linked activity cards */}
+                  {linkedActivities.map((linked, idx) => {
+                    const linkedFloor = (timechart.floorLevels || []).find(f => f.id === linked.floorLevelId);
+                    const offsetLabel = linked.offsetDays === 0
+                      ? 'Same day as parent ends'
+                      : linked.offsetDays > 0
+                        ? `+${linked.offsetDays} day${linked.offsetDays !== 1 ? 's' : ''} after parent ends`
+                        : `${linked.offsetDays} day${linked.offsetDays !== -1 ? 's' : ''} before parent ends`;
+                    return (
+                      <View key={linked.id} style={styles.linkedActivityCard}>
+                        <View style={styles.linkedActivityCardHeader}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.linkedActivityCardName}>{linked.name}</Text>
+                            <Text style={styles.linkedActivityCardMeta}>
+                              {offsetLabel} · {linked.duration} day{linked.duration !== 1 ? 's' : ''}
+                              {linkedFloor ? ` · ${linkedFloor.name}` : ''}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => setLinkedActivities(prev => prev.filter((_, i) => i !== idx))}
+                            style={styles.linkedActivityCardRemove}
+                          >
+                            <Text style={styles.linkedActivityCardRemoveText}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {/* Inline "Add Linked Activity" form */}
+                  {addingLinkedActivityIndex !== null ? (
+                    <View style={styles.linkedActivityForm}>
+                      <Text style={styles.linkedActivityFormTitle}>New Linked Activity</Text>
+
+                      {/* Name */}
+                      <View style={styles.linkedActivityFormRow}>
+                        <Text style={styles.linkedActivityFormLabel}>Activity Name *</Text>
                         <TextInput
                           style={styles.input}
                           placeholder="e.g., Inspection, Finishing"
                           placeholderTextColor="#999"
-                          value={childActivityName}
-                          onChangeText={setChildActivityName}
+                          value={linkedName}
+                          onChangeText={setLinkedName}
                         />
-                        <Text style={styles.helperText}>Child activity will start immediately after parent activity ends</Text>
                       </View>
 
-                      <View style={styles.formSection}>
-                        <Text style={styles.label}>Child Activity Duration (days) *</Text>
+                      {/* Offset selector */}
+                      <View style={styles.linkedActivityFormRow}>
+                        <Text style={styles.linkedActivityFormLabel}>Starts (relative to parent end) *</Text>
+                        <View style={styles.linkedOffsetRow}>
+                          {[-2, -1, 0, 1, 2].map(preset => (
+                            <TouchableOpacity
+                              key={preset}
+                              style={[
+                                styles.linkedOffsetChip,
+                                !linkedUseCustomOffset && linkedOffsetDays === preset && styles.linkedOffsetChipSelected,
+                              ]}
+                              onPress={() => {
+                                setLinkedOffsetDays(preset);
+                                setLinkedUseCustomOffset(false);
+                              }}
+                            >
+                              <Text style={[
+                                styles.linkedOffsetChipText,
+                                !linkedUseCustomOffset && linkedOffsetDays === preset && styles.linkedOffsetChipTextSelected,
+                              ]}>
+                                {preset > 0 ? `+${preset}` : preset === 0 ? '0' : `${preset}`}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                          <TouchableOpacity
+                            style={[styles.linkedOffsetChip, linkedUseCustomOffset && styles.linkedOffsetChipSelected]}
+                            onPress={() => setLinkedUseCustomOffset(true)}
+                          >
+                            <Text style={[styles.linkedOffsetChipText, linkedUseCustomOffset && styles.linkedOffsetChipTextSelected]}>
+                              Custom
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                        {linkedUseCustomOffset && (
+                          <View style={styles.linkedCustomOffsetRow}>
+                            <TextInput
+                              style={[styles.input, { flex: 1, marginRight: 8 }]}
+                              placeholder="e.g., 3 or -3"
+                              placeholderTextColor="#999"
+                              value={linkedCustomOffset}
+                              onChangeText={setLinkedCustomOffset}
+                              keyboardType="numbers-and-punctuation"
+                            />
+                            <Text style={styles.helperText}>days from parent end</Text>
+                          </View>
+                        )}
+                        <Text style={styles.helperText}>
+                          {linkedUseCustomOffset
+                            ? (parseInt(linkedCustomOffset) > 0
+                                ? `Linked activity starts ${linkedCustomOffset} day(s) after parent ends`
+                                : parseInt(linkedCustomOffset) < 0
+                                  ? `Linked activity starts ${Math.abs(parseInt(linkedCustomOffset))} day(s) before parent ends`
+                                  : parseInt(linkedCustomOffset) === 0
+                                    ? 'Linked activity starts on the same day parent ends'
+                                    : 'Enter a non-zero offset')
+                            : (linkedOffsetDays > 0
+                                ? `Linked activity starts ${linkedOffsetDays} day(s) after parent ends`
+                                : linkedOffsetDays === 0
+                                  ? 'Linked activity starts on the same day parent ends'
+                                  : `Linked activity starts ${Math.abs(linkedOffsetDays)} day(s) before parent ends`)
+                          }
+                        </Text>
+                        {/* Computed start date preview */}
+                        {(() => {
+                          const [sy, sm, sd] = startActivityDate.split('-').map(Number);
+                          const parentStart = new Date(sy, sm - 1, sd);
+                          const dur = parseInt(activityDuration) || 1;
+                          const parentEnd = new Date(parentStart);
+                          parentEnd.setDate(parentEnd.getDate() + dur - 1);
+                          const offsetVal = linkedUseCustomOffset
+                            ? (parseInt(linkedCustomOffset) || 0)
+                            : linkedOffsetDays;
+                          const linkedStart = new Date(parentEnd);
+                          linkedStart.setDate(linkedStart.getDate() + offsetVal);
+                          const projectEnd = new Date(timechart.endDate);
+                          const isOutOfRange = linkedStart > projectEnd;
+                          return (
+                            <Text style={[styles.helperText, isOutOfRange && { color: '#FF4444', fontWeight: '600' }]}>
+                              📅 Computed start: {linkedStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              {isOutOfRange ? '  ⚠️ This is after the project end date!' : ''}
+                            </Text>
+                          );
+                        })()}
+                      </View>
+
+                      {/* Duration */}
+                      <View style={styles.linkedActivityFormRow}>
+                        <Text style={styles.linkedActivityFormLabel}>Duration (days) *</Text>
                         <View style={styles.durationStepper}>
                           <TouchableOpacity
                             style={styles.durationStepperBtn}
-                            onPress={() => setChildActivityDuration(d => String(Math.max(1, (parseInt(d) || 1) - 1)))}
+                            onPress={() => setLinkedDuration((d: string) => String(Math.max(1, (parseInt(d) || 1) - 1)))}
                           >
                             <Text style={styles.durationStepperBtnText}>−</Text>
                           </TouchableOpacity>
                           <TextInput
                             style={styles.durationStepperInput}
-                            value={childActivityDuration}
-                            onChangeText={v => setChildActivityDuration(v.replace(/[^0-9]/g, ''))}
+                            value={linkedDuration}
+                            onChangeText={v => setLinkedDuration(v.replace(/[^0-9]/g, ''))}
                             keyboardType="numeric"
                             textAlign="center"
                             selectTextOnFocus
                           />
                           <TouchableOpacity
                             style={styles.durationStepperBtn}
-                            onPress={() => setChildActivityDuration(d => String((parseInt(d) || 0) + 1))}
+                            onPress={() => setLinkedDuration((d: string) => String((parseInt(d) || 0) + 1))}
                           >
                             <Text style={styles.durationStepperBtnText}>+</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
-                    </>
+
+                      {/* Floor Level for linked activity */}
+                      <View style={styles.linkedActivityFormRow}>
+                        <Text style={styles.linkedActivityFormLabel}>Floor Level *</Text>
+                        <View style={styles.pickerContainer}>
+                          {(timechart.floorLevels || []).map((floor) => (
+                            <TouchableOpacity
+                              key={floor.id}
+                              style={[
+                                styles.contractorOption,
+                                linkedFloorLevelId === floor.id && styles.contractorOptionSelected,
+                              ]}
+                              onPress={() => setLinkedFloorLevelId(floor.id)}
+                            >
+                              <View style={[styles.contractorOptionColor, { backgroundColor: floor.color }]} />
+                              <Text style={[
+                                styles.contractorOptionText,
+                                linkedFloorLevelId === floor.id && styles.contractorOptionTextSelected,
+                              ]}>
+                                {floor.name}
+                              </Text>
+                              {linkedFloorLevelId === floor.id && <Text style={styles.checkmark}>✓</Text>}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+
+                      {/* Contractors for linked activity */}
+                      <View style={styles.linkedActivityFormRow}>
+                        <Text style={styles.linkedActivityFormLabel}>Contractors (optional)</Text>
+                        <View style={styles.pickerContainer}>
+                          {timechart.subcontractors.map((c) => {
+                            const checked = linkedSubcontractorIds.includes(c.id);
+                            return (
+                              <TouchableOpacity
+                                key={c.id}
+                                style={styles.multiContractorRow}
+                                activeOpacity={0.7}
+                                onPress={() => setLinkedSubcontractorIds(prev =>
+                                  checked ? prev.filter(id => id !== c.id) : [...prev, c.id]
+                                )}
+                              >
+                                <View style={[styles.multiContractorCheckbox, checked && styles.multiContractorCheckboxChecked]}>
+                                  {checked && <Text style={styles.multiContractorCheckmark}>✓</Text>}
+                                </View>
+                                <Text style={{ flex: 1, color: '#333', fontSize: 14 }}>{c.name}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+
+                      {/* Confirm / Cancel */}
+                      <View style={styles.linkedActivityFormActions}>
+                        <TouchableOpacity
+                          style={styles.linkedActivityCancelBtn}
+                          onPress={() => {
+                            setAddingLinkedActivityIndex(null);
+                            setLinkedName('');
+                            setLinkedOffsetDays(1);
+                            setLinkedCustomOffset('');
+                            setLinkedUseCustomOffset(false);
+                            setLinkedDuration('7');
+                            setLinkedFloorLevelId('');
+                            setLinkedSubcontractorIds([]);
+                          }}
+                        >
+                          <Text style={styles.linkedActivityCancelBtnText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.linkedActivityConfirmBtn}
+                          onPress={() => {
+                            if (!linkedName.trim()) {
+                              Alert.alert('Error', 'Please enter a name for the linked activity');
+                              return;
+                            }
+                            if (!linkedFloorLevelId) {
+                              Alert.alert('Error', 'Please select a floor level for the linked activity');
+                              return;
+                            }
+                            const offsetVal = linkedUseCustomOffset
+                              ? (parseInt(linkedCustomOffset) || 1)
+                              : linkedOffsetDays;
+                            const durationVal = parseInt(linkedDuration) || 1;
+                            const newEntry: LinkedActivityEntry = {
+                              id: `linked-${Date.now()}-${Math.random()}`,
+                              name: linkedName.trim(),
+                              offsetDays: offsetVal,
+                              duration: durationVal,
+                              floorLevelId: linkedFloorLevelId,
+                              subcontractorIds: linkedSubcontractorIds,
+                            };
+                            setLinkedActivities(prev => [...prev, newEntry]);
+                            setAddingLinkedActivityIndex(null);
+                            setLinkedName('');
+                            setLinkedOffsetDays(1);
+                            setLinkedCustomOffset('');
+                            setLinkedUseCustomOffset(false);
+                            setLinkedDuration('7');
+                            setLinkedFloorLevelId('');
+                            setLinkedSubcontractorIds([]);
+                          }}
+                        >
+                          <Text style={styles.linkedActivityConfirmBtnText}>✓ Add Linked Activity</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.addLinkedActivityBtn}
+                      onPress={() => {
+                        // Pre-fill floor from parent selection
+                        setLinkedFloorLevelId(selectedFloorLevel || (timechart.floorLevels?.[0]?.id ?? ''));
+                        setLinkedSubcontractorIds([...selectedSubcontractorIds]);
+                        setAddingLinkedActivityIndex(linkedActivities.length);
+                      }}
+                    >
+                      <Text style={styles.addLinkedActivityBtnText}>＋ Add Linked Activity</Text>
+                    </TouchableOpacity>
                   )}
-                </>
+                </View>
               )}
+              {/* ──────────────────────────────────────────────────────────────── */}
 
               <View style={styles.divider} />
             </ScrollView>
@@ -3613,5 +4041,152 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     paddingLeft: 12,
+  },
+  // ── Linked Activity Styles ──────────────────────────────────────────────────
+  linkedActivityCard: {
+    backgroundColor: '#F0F7FF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#B3D4F5',
+    marginBottom: 8,
+    padding: 12,
+  },
+  linkedActivityCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  linkedActivityCardName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1A3A5C',
+    marginBottom: 2,
+  },
+  linkedActivityCardMeta: {
+    fontSize: 12,
+    color: '#5580A0',
+  },
+  linkedActivityCardRemove: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  linkedActivityCardRemoveText: {
+    color: '#C62828',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  linkedActivityForm: {
+    backgroundColor: '#F8FAFF',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#B3D4F5',
+    padding: 14,
+    marginTop: 4,
+  },
+  linkedActivityFormTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0066CC',
+    marginBottom: 12,
+  },
+  linkedActivityFormRow: {
+    marginBottom: 12,
+  },
+  linkedActivityFormLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 6,
+  },
+  linkedOffsetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 6,
+  },
+  linkedOffsetChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#B3D4F5',
+    backgroundColor: '#F0F7FF',
+  },
+  linkedOffsetChipSelected: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  linkedOffsetChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0066CC',
+  },
+  linkedOffsetChipTextSelected: {
+    color: '#FFF',
+  },
+  linkedCustomOffsetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  linkedActivityFormActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 8,
+  },
+  linkedActivityCancelBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#CCC',
+    backgroundColor: '#FFF',
+  },
+  linkedActivityCancelBtnText: {
+    color: '#666',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  linkedActivityConfirmBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#0066CC',
+  },
+  linkedActivityConfirmBtnText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  addLinkedActivityBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 11,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    borderStyle: 'dashed',
+    backgroundColor: '#F0F7FF',
+    marginTop: 4,
+  },
+  addLinkedActivityBtnText: {
+    color: '#0066CC',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  // ── Linked Activity row in chart ────────────────────────────────────────────
+  linkedActivityRow: {
+    backgroundColor: '#F0F7FF',
+    borderLeftWidth: 3,
+    borderLeftColor: '#0066CC',
+  },
+  linkedActivityCellText: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#1A3A5C',
+    paddingLeft: 8,
   },
 });

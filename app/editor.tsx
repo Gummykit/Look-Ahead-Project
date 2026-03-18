@@ -156,6 +156,26 @@ export default function EditorScreen() {
     });
   };
 
+  const handleAddActivities = (activities: any[]) => {
+    if (!timechart) return;
+    console.log('🔵 [EditorApp] handleAddActivities called with:', activities.length, 'activities');
+    const existingIds = new Set(timechart.activities.map(a => a.id));
+    const toAdd = activities
+      .filter(a => !existingIds.has(a.id))
+      .map((a, i) => ({
+        ...a,
+        id: a.id || Math.random().toString(36).substr(2, 9),
+        sequenceOrder: timechart.activities.length + 1 + i,
+        childActivityIds: a.childActivityIds ?? [],
+      }));
+    console.log('🔵 [EditorApp] After filtering, adding:', toAdd.length, 'activities');
+    if (toAdd.length === 0) return;
+    setTimechart({
+      ...timechart,
+      activities: [...timechart.activities, ...toAdd],
+    });
+  };
+
   const handleUpdateActivity = (id: string, updatedActivity: any) => {
     if (!timechart) return;
 
@@ -494,6 +514,7 @@ export default function EditorScreen() {
         onRemoveSubcontractor={handleRemoveSubcontractor}
         onUpdateSubcontractor={handleUpdateSubcontractor}
         onAddActivity={handleAddActivity}
+        onAddActivities={handleAddActivities}
         onRemoveActivity={handleRemoveActivity}
         onUpdateActivity={handleUpdateActivity}
         onBatchUpdateActivities={handleBatchUpdateActivities}
