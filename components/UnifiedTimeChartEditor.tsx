@@ -16,6 +16,9 @@ import {
   FlatList,
   SafeAreaView,
   Platform,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { TimeChartData, Activity, User } from '../types';
@@ -391,7 +394,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const { width } = Dimensions.get('window');
   const DAY_WIDTH = 50;
   const ACTIVITY_LABEL_WIDTH = 150;
-  const CONTRACTOR_LABEL_WIDTH = 130;
+  const CONTRACTOR_LABEL_WIDTH = 200;
 
   const totalDays = getDaysBetween(timechart.startDate, timechart.endDate) + 1;
   const chartWidth = totalDays * DAY_WIDTH + ACTIVITY_LABEL_WIDTH + CONTRACTOR_LABEL_WIDTH;
@@ -458,6 +461,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [linkedDuration, setLinkedDuration] = useState('7');
   const [linkedFloorLevelId, setLinkedFloorLevelId] = useState<string>('');
   const [linkedSubcontractorIds, setLinkedSubcontractorIds] = useState<string[]>([]);
+  // ──────────────────────────────────────────────────────────────────────────
+  
+  // Activity Linking state (for linking existing activities together)
+  const [showLinkActivityModal, setShowLinkActivityModal] = useState(false);
+  const [linkingSourceActivityId, setLinkingSourceActivityId] = useState<string | null>(null); // Activity being edited/created
+  const [selectedLinkTargetActivityId, setSelectedLinkTargetActivityId] = useState<string | null>(null); // Target activity to link to
+  const [linkOffsetDays, setLinkOffsetDays] = useState(0);
+  const [linkUseCustomOffset, setLinkUseCustomOffset] = useState(false);
+  const [linkCustomOffset, setLinkCustomOffset] = useState('');
   // ──────────────────────────────────────────────────────────────────────────
   
   // Floor level management state
@@ -562,6 +574,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🟡 [ADD-ACTIVITY] handleAddActivity called');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🟡 [ADD-ACTIVITY] Current state:', {
+      editingActivityId,
+      activityName,
+      linkingSourceActivityId,
+    });
+
     // If the linked-activity inline form is still open, auto-confirm it before saving
     // so the user's entered data isn't silently lost when they press "Done".
     if (addingLinkedActivityIndex !== null) {
@@ -610,6 +631,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   // Internal helper — separated so that auto-confirm can pass the fresh linked list
   // without waiting for setState to flush.
   const _submitActivity = (confirmedLinked: LinkedActivityEntry[]) => {
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🟡 [SUBMIT-ACTIVITY] _submitActivity called');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🟡 [SUBMIT-ACTIVITY] Parameters:', {
+      confirmedLinkedCount: confirmedLinked.length,
+      editingActivityId,
+      activityName,
+    });
+    
     if (!activityName.trim()) {
       Alert.alert('Error', 'Please enter activity name');
       return;
@@ -767,12 +797,21 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         linkedCount: linkedActivityObjs.length,
         linkedDetails: linkedActivityObjs.map(l => ({ id: l.id, name: l.name, parentId: l.parentActivityId })),
       });
+      console.log('✅ [SUBMIT-ACTIVITY] Calling onAddActivities with', linkedActivityObjs.length + 1, 'activities');
       onAddActivities([parentActivityObj, ...linkedActivityObjs]);
     } else {
-      console.log('🟡 [Add] Calling onAddActivity (no linked activities)');
+      console.log('🟡 [SUBMIT-ACTIVITY] Calling onAddActivity (no linked activities)');
+      console.log('🟡 [SUBMIT-ACTIVITY] Parent activity:', {
+        id: parentActivityObj.id,
+        name: parentActivityObj.name,
+      });
       onAddActivity(parentActivityObj);
     }
 
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('✅ [SUBMIT-ACTIVITY] Activity submission completed');
+    console.log('═══════════════════════════════════════════════════════════════');
+    
     setActivityName('');
     setActivityDescription('');
     setStartActivityDate(new Date(timechart.startDate).toISOString().split('T')[0]);
@@ -783,6 +822,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setInlineNewContractorName('');
     setLinkedActivities([]);
     setAddingLinkedActivityIndex(null);
+    setLinkingSourceActivityId(null);
     setShowAddActivityModal(false);
   };
 
@@ -807,6 +847,11 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
     // Pre-fill form fields with existing activity data
+    console.log('🟡 [EDIT] handleOpenEditActivity called for activity:', {
+      id: activity.id,
+      name: activity.name,
+      parentActivityId: activity.parentActivityId,
+    });
     setEditingActivityId(activity.id);
     setActivityName(activity.name);
     setActivityDescription(activity.description || '');
@@ -824,6 +869,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setLinkedActivities([]); // Linked activities are not shown/edited in edit mode
     setAddingLinkedActivityIndex(null);
     setInlineNewContractorName('');
+    console.log('🟡 [EDIT] Setting linkingSourceActivityId to:', activity.id);
+    setLinkingSourceActivityId(activity.id); // Set source for linking
     setShowAddActivityModal(true);
   };
 
@@ -893,7 +940,187 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setSelectedSubcontractor(null);
     setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
     setInlineNewContractorName('');
+    setLinkingSourceActivityId(null);
     setShowAddActivityModal(false);
+  };
+
+  const handleLinkActivities = () => {
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('� [LINK-HANDLER-START] handleLinkActivities called');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🔵 [LINK-HANDLER] Current state:', {
+      linkingSourceActivityId,
+      selectedLinkTargetActivityId,
+      linkOffsetDays,
+      linkUseCustomOffset,
+      linkCustomOffset,
+      editingActivityId,
+    });
+
+    if (!linkingSourceActivityId) {
+      console.log('🔴 [LINK-HANDLER] ❌ No source activity ID');
+      Alert.alert('Error', 'Source activity not found');
+      return;
+    }
+
+    if (!selectedLinkTargetActivityId) {
+      console.log('🔴 [LINK-HANDLER] ❌ No target activity selected');
+      Alert.alert('Error', 'Please select a target activity to link to');
+      return;
+    }
+
+    if (linkingSourceActivityId === selectedLinkTargetActivityId) {
+      console.log('🔴 [LINK-HANDLER] ❌ Attempting to link activity to itself');
+      Alert.alert('Error', 'Cannot link an activity to itself');
+      return;
+    }
+
+    const sourceActivity = timechart.activities.find(a => a.id === linkingSourceActivityId);
+    const targetActivity = timechart.activities.find(a => a.id === selectedLinkTargetActivityId);
+
+    console.log('🔵 [LINK-HANDLER] Activity lookup:', {
+      sourceId: linkingSourceActivityId,
+      sourceFound: !!sourceActivity,
+      sourceName: sourceActivity?.name,
+      sourceParentId: sourceActivity?.parentActivityId,
+      targetId: selectedLinkTargetActivityId,
+      targetFound: !!targetActivity,
+      targetName: targetActivity?.name,
+      targetParentId: targetActivity?.parentActivityId,
+    });
+
+    if (!sourceActivity) {
+      console.log('🔴 [LINK-HANDLER] ❌ Source activity not found in timechart');
+      Alert.alert('Error', 'Source activity not found');
+      return;
+    }
+
+    if (!targetActivity) {
+      console.log('🔴 [LINK-HANDLER] ❌ Target activity not found in timechart');
+      Alert.alert('Error', 'Target activity not found');
+      return;
+    }
+
+    console.log('✅ [LINK-HANDLER] Both activities found, proceeding with linking...');
+
+    const offsetVal = linkUseCustomOffset ? (parseInt(linkCustomOffset) || 0) : linkOffsetDays;
+    console.log('🔵 [LINK-HANDLER] Offset value:', offsetVal);
+
+    // If we're in edit mode (editingActivityId is set), use the form values for source duration
+    // Otherwise, use the saved activity duration
+    let sourceDurationDays = getDaysBetween(sourceActivity.startDate, sourceActivity.endDate);
+    if (editingActivityId === linkingSourceActivityId) {
+      // Use form values for calculating duration
+      const [startYear, startMonth, startDay] = startActivityDate.split('-').map(Number);
+      const formStart = new Date(startYear, startMonth - 1, startDay);
+      formStart.setHours(0, 0, 0, 0);
+      const durationDays = parseInt(activityDuration) || 1;
+      sourceDurationDays = durationDays;
+      console.log('� [LINK-HANDLER] In edit mode - using form duration:', {
+        formStart: formStart.toISOString(),
+        duration: sourceDurationDays,
+      });
+    } else {
+      console.log('🟡 [LINK-HANDLER] Not in edit mode - using saved duration:', sourceDurationDays);
+    }
+
+    // Calculate new dates for the source activity based on offset from target's end date
+    const targetEndDate = new Date(targetActivity.endDate);
+    targetEndDate.setHours(0, 0, 0, 0);
+    
+    // Linked activity starts at: target end date + offset days
+    const newSourceStartDate = new Date(targetEndDate);
+    newSourceStartDate.setDate(newSourceStartDate.getDate() + offsetVal);
+    newSourceStartDate.setHours(0, 0, 0, 0);
+    
+    // Calculate end date based on duration
+    const newSourceEndDate = new Date(newSourceStartDate);
+    newSourceEndDate.setDate(newSourceEndDate.getDate() + sourceDurationDays - 1);
+    newSourceEndDate.setHours(0, 0, 0, 0);
+
+    console.log('� [LINK-HANDLER] Calculated new dates:', {
+      targetEndDate: targetEndDate.toISOString(),
+      offsetVal,
+      sourceDuration: sourceDurationDays,
+      newSourceStartDate: newSourceStartDate.toISOString(),
+      newSourceEndDate: newSourceEndDate.toISOString(),
+    });
+
+    // Update the source activity to have the target as parent AND new dates based on offset
+    // IMPORTANT: Include startDate and endDate to prevent "Invalid Date" errors in parent handler
+    const sourceUpdates: any = {
+      parentActivityId: targetActivity.id,
+      startDate: newSourceStartDate,
+      endDate: newSourceEndDate,
+      duration: sourceDurationDays,
+    };
+
+    // Update the target activity to include source in childActivityIds
+    const updatedChildIds = targetActivity.childActivityIds ? [...targetActivity.childActivityIds] : [];
+    if (!updatedChildIds.includes(sourceActivity.id)) {
+      updatedChildIds.push(sourceActivity.id);
+    }
+
+    console.log('🟢 [LINK-HANDLER] Prepared updates:', {
+      sourceActivityId: linkingSourceActivityId,
+      sourceUpdates,
+      targetActivityId: selectedLinkTargetActivityId,
+      targetChildIds: updatedChildIds,
+    });
+
+    try {
+      // CRITICAL FIX: Use batch update to apply BOTH updates in a single state change
+      // This prevents the second update from overwriting the first
+      if (onBatchUpdateActivities) {
+        console.log('🟢 [LINK-HANDLER] ➡️ Using batch update for SOURCE and TARGET activities...');
+        onBatchUpdateActivities([
+          {
+            id: linkingSourceActivityId,
+            changes: sourceUpdates,
+          },
+          {
+            id: selectedLinkTargetActivityId,
+            changes: {
+              childActivityIds: updatedChildIds,
+              startDate: targetActivity.startDate,
+              endDate: targetActivity.endDate,
+            },
+          },
+        ]);
+        console.log('✅ [LINK-HANDLER] Batch update completed for SOURCE and TARGET activities');
+      } else {
+        // Fallback to separate updates if batch not available
+        console.log('🟡 [LINK-HANDLER] Batch update not available, using separate updates...');
+        onUpdateActivity(linkingSourceActivityId, sourceUpdates);
+        console.log('✅ [LINK-HANDLER] Source activity update callback completed');
+        onUpdateActivity(selectedLinkTargetActivityId, {
+          childActivityIds: updatedChildIds,
+          startDate: targetActivity.startDate,
+          endDate: targetActivity.endDate,
+        });
+        console.log('✅ [LINK-HANDLER] Target activity update callback completed');
+      }
+
+      console.log('✅ [LINK-HANDLER] Both updates called successfully');
+    } catch (error) {
+      console.log('🔴 [LINK-HANDLER] Error during update:', error);
+      Alert.alert('Error', 'Failed to link activities');
+      return;
+    }
+
+    // Reset linking state
+    console.log('� [LINK-HANDLER] Resetting linking state...');
+    setShowLinkActivityModal(false);
+    setLinkingSourceActivityId(null);
+    setSelectedLinkTargetActivityId(null);
+    setLinkOffsetDays(0);
+    setLinkUseCustomOffset(false);
+    setLinkCustomOffset('');
+
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('✅ [LINK-HANDLER-COMPLETE] Linking process finished successfully');
+    console.log('═══════════════════════════════════════════════════════════════');
+    Alert.alert('Success', 'Activities linked successfully!');
   };
 
   const handleAddContractor = () => {
@@ -1010,12 +1237,49 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
     // Find the activity in the timechart to check if it has children
     const activity = timechart.activities.find(a => a.id === draggingActivityId);
+    
+    // Check for children in TWO ways:
+    // 1. childActivityIds array (if maintained)
+    // 2. parentActivityId references (more reliable)
     const childActivityIds = activity?.childActivityIds || [];
+    const childrenByParentId = timechart.activities.filter(a => a.parentActivityId === draggingActivityId).map(a => a.id);
+    
+    // Use whichever has content, prefer parentActivityId method as it's more reliable
+    const directChildIds = childrenByParentId.length > 0 ? childrenByParentId : childActivityIds;
+    
+    console.log('🔵 [Drag] Activity press out:', {
+      activityId: draggingActivityId,
+      childActivityIds: childActivityIds,
+      childrenByParentId: childrenByParentId,
+      usingDirectChildIds: directChildIds,
+    });
+    
+    // Helper function to recursively find all descendants (children, grandchildren, etc.)
+    const findAllDescendants = (parentIds: string[]): string[] => {
+      const descendants: string[] = [];
+      const toProcess = [...parentIds];
+      
+      while (toProcess.length > 0) {
+        const currentId = toProcess.shift();
+        if (!currentId) continue;
+        
+        // Find all activities that have this as their parent
+        const children = timechart.activities.filter(a => a.parentActivityId === currentId);
+        children.forEach(child => {
+          if (!descendants.includes(child.id)) {
+            descendants.push(child.id);
+            toProcess.push(child.id); // Add to queue for further processing
+          }
+        });
+      }
+      
+      return descendants;
+    };
     
     // Calculate the offset (days moved) BEFORE updating parent
     // Use getSignedDaysBetween to handle both forward and backward movement correctly
     let offset = 0;
-    if (activity && childActivityIds.length > 0) {
+    if (activity && directChildIds.length > 0) {
       offset = getSignedDaysBetween(activity.startDate, dragActivity.startDate);
       console.log('🔵 [Drag] Parent offset calculation:', {
         originalStartDate: activity.startDate,
@@ -1032,9 +1296,22 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     
     // IMPORTANT: For parent activities with children, we need to update ALL at once
     // to avoid stale state issues. We'll do this by calling handleUpdateActivityWithChildren
-    if (childActivityIds.length > 0) {
+    if (directChildIds.length > 0) {
+      // directChildIds are the immediate children we found
+      // Now find their descendants (grandchildren, great-grandchildren, etc.)
+      const descendantsOfChildren = findAllDescendants(directChildIds);
+      
+      // Combine direct children + all their descendants
+      const allDescendantIds = [...directChildIds, ...descendantsOfChildren];
+      
+      console.log('🔵 [Drag] Child discovery:', {
+        directChildIds: directChildIds,
+        descendantsOfChildren: descendantsOfChildren,
+        allDescendantIds: allDescendantIds,
+      });
+      
       // This is a parent with children - update all together
-      const childUpdatesData = childActivityIds.map((childId) => {
+      const childUpdatesData = allDescendantIds.map((childId) => {
         const childActivity = timechart.activities.find(a => a.id === childId);
         if (childActivity) {
           const newChildStartDate = new Date(childActivity.startDate);
@@ -1054,6 +1331,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         return null;
       }).filter(Boolean) as any[];
 
+      console.log('🔵 [Drag] Updating', allDescendantIds.length, 'descendants with offset', offset, '- descendantIds:', allDescendantIds);
+
       // Call a special update method that handles parent + children together
       onUpdateActivity(draggingActivityId, {
         startDate: dragActivity.startDate,
@@ -1063,6 +1342,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       });
     } else {
       // Regular activity without children - update normally
+      console.log('🔵 [Drag] No children found, updating parent only');
       onUpdateActivity(draggingActivityId, {
         startDate: dragActivity.startDate,
         endDate: dragActivity.endDate,
@@ -1614,11 +1894,33 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       // Check ALL activities in the group (not just primaryActivity) since the floor-level
       // sort inside groupActivitiesByNameAndContractor may put the real parent at index > 0.
       const groupActivityIds = new Set(activities.map(a => a.id));
+      
+      // Helper function to recursively find all descendants (children, grandchildren, etc.)
+      const findAllDescendants = (parentIds: Set<string>): Set<string> => {
+        const descendants = new Set<string>();
+        const toProcess = Array.from(parentIds);
+        
+        while (toProcess.length > 0) {
+          const currentId = toProcess.pop();
+          if (!currentId) continue;
+          
+          // Find all activities that have this as their parent
+          const children = timechart.activities.filter(a => a.parentActivityId === currentId);
+          children.forEach(child => {
+            if (!descendants.has(child.id)) {
+              descendants.add(child.id);
+              toProcess.push(child.id); // Add to queue for further processing
+            }
+          });
+        }
+        
+        return descendants;
+      };
+      
+      const allDescendantIds = findAllDescendants(groupActivityIds);
       const linkedActivityRows = timechart.activities.filter(a =>
-        // linked → parent reference
-        (a.parentActivityId && groupActivityIds.has(a.parentActivityId)) ||
-        // parent → linked reference (any activity in the group lists this activity as a child)
-        activities.some(parent => parent.childActivityIds && parent.childActivityIds.includes(a.id))
+        // Include if this activity is a descendant of the group
+        allDescendantIds.has(a.id)
       );
 
       if (linkedActivityRows.length > 0) {
@@ -1626,6 +1928,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
           groupKey: group.groupKey,
           parentIds: Array.from(groupActivityIds),
           linkedActivities: linkedActivityRows.map(l => ({ id: l.id, name: l.name, parentId: l.parentActivityId })),
+        });
+        // DEBUG: Log the full object to see what fields are present
+        linkedActivityRows.forEach(l => {
+          console.log('🔵 [Render] Full linked activity object:', {
+            id: l.id,
+            name: l.name,
+            parentActivityId: l.parentActivityId,
+            allKeys: Object.keys(l),
+          });
         });
       }
 
@@ -1727,6 +2038,31 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                   >
                     <Text style={styles.editActivityText}>✎</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      // Open link modal for the first (primary) activity in the group
+                      console.log('═══════════════════════════════════════════════════════════════');
+                      console.log('🔗 [LINK-BUTTON] Link button clicked in activity row');
+                      console.log('═══════════════════════════════════════════════════════════════');
+                      console.log('🔗 [LINK-BUTTON] Activity details:', {
+                        primaryActivityId: primaryActivity.id,
+                        primaryActivityName: primaryActivity.name,
+                        primaryActivityParentId: primaryActivity.parentActivityId,
+                        editingActivityId,
+                      });
+                      setLinkingSourceActivityId(primaryActivity.id);
+                      setSelectedLinkTargetActivityId(null);
+                      setLinkOffsetDays(0);
+                      setLinkUseCustomOffset(false);
+                      setLinkCustomOffset('');
+                      console.log('� [LINK-BUTTON] State set, opening modal...');
+                      setShowLinkActivityModal(true);
+                      console.log('═══════════════════════════════════════════════════════════════');
+                    }}
+                    style={{ marginLeft: 8 }}
+                  >
+                    <Text style={[styles.editActivityText, { color: '#FF9800' }]}>🔗</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -1738,6 +2074,14 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             {/* Linked Activity Rows — appear directly below the parent */}
             {linkedActivityRows.map((linkedActivity) => {
               const linkedStartDay = getDaysBetween(timechart.startDate, linkedActivity.startDate);
+              console.log('🎨 [RenderChild] Rendering child activity:', {
+                childId: linkedActivity.id,
+                childName: linkedActivity.name,
+                startDate: linkedActivity.startDate,
+                linkedStartDay: linkedStartDay,
+                timechartStartDate: timechart.startDate,
+                parentActivityId: linkedActivity.parentActivityId,
+              });
               const linkedContractorNames = (linkedActivity.subcontractorIds && linkedActivity.subcontractorIds.length > 0
                 ? linkedActivity.subcontractorIds.map(id => timechart.subcontractors.find(c => c.id === id)?.name).filter(Boolean)
                 : linkedActivity.subcontractorId
@@ -2076,6 +2420,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         onRequestClose={() => {
           setEditingActivityId(null);
           setInlineNewContractorName('');
+          setLinkingSourceActivityId(null);
           setShowAddActivityModal(false);
         }}
       >
@@ -2085,6 +2430,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               <TouchableOpacity onPress={() => {
                 setEditingActivityId(null);
                 setInlineNewContractorName('');
+                setLinkingSourceActivityId(null);
                 setShowAddActivityModal(false);
               }}>
                 <Text style={styles.closeButton}>← Back</Text>
@@ -2288,8 +2634,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 </View>
               </View>
 
-              {/* ── Linked Activities Section — only shown when adding a new activity ── */}
-              {!editingActivityId && (
+              {/* ── Linked Activities Section ── */}
+              {!editingActivityId ? (
+                // CREATE MODE: Add inline linked activities
                 <View style={styles.formSection}>
                   <Text style={styles.label}>Linked Activities</Text>
                   <Text style={styles.helperText}>
@@ -2396,7 +2743,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                                   ? `Linked activity starts ${Math.abs(parseInt(linkedCustomOffset))} day(s) before parent ends`
                                   : parseInt(linkedCustomOffset) === 0
                                     ? 'Linked activity starts on the same day parent ends'
-                                    : 'Enter a non-zero offset')
+                                    : 'Enter offset')
                             : (linkedOffsetDays > 0
                                 ? `Linked activity starts ${linkedOffsetDays} day(s) after parent ends`
                                 : linkedOffsetDays === 0
@@ -2404,27 +2751,6 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                                   : `Linked activity starts ${Math.abs(linkedOffsetDays)} day(s) before parent ends`)
                           }
                         </Text>
-                        {/* Computed start date preview */}
-                        {(() => {
-                          const [sy, sm, sd] = startActivityDate.split('-').map(Number);
-                          const parentStart = new Date(sy, sm - 1, sd);
-                          const dur = parseInt(activityDuration) || 1;
-                          const parentEnd = new Date(parentStart);
-                          parentEnd.setDate(parentEnd.getDate() + dur - 1);
-                          const offsetVal = linkedUseCustomOffset
-                            ? (parseInt(linkedCustomOffset) || 0)
-                            : linkedOffsetDays;
-                          const linkedStart = new Date(parentEnd);
-                          linkedStart.setDate(linkedStart.getDate() + offsetVal);
-                          const projectEnd = new Date(timechart.endDate);
-                          const isOutOfRange = linkedStart > projectEnd;
-                          return (
-                            <Text style={[styles.helperText, isOutOfRange && { color: '#FF4444', fontWeight: '600' }]}>
-                              📅 Computed start: {linkedStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                              {isOutOfRange ? '  ⚠️ This is after the project end date!' : ''}
-                            </Text>
-                          );
-                        })()}
                       </View>
 
                       {/* Duration */}
@@ -2573,6 +2899,20 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                       <Text style={styles.addLinkedActivityBtnText}>＋ Add Linked Activity</Text>
                     </TouchableOpacity>
                   )}
+                </View>
+              ) : (
+                // EDIT MODE: Link to existing activities
+                <View style={styles.formSection}>
+                  <Text style={styles.label}>Link to Another Activity</Text>
+                  <Text style={styles.helperText}>
+                    ⚠️ Save this activity first, then use "Add Linkage" from the activity row to link it.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.addLinkedActivityBtn, { opacity: 0.5 }]}
+                    disabled={true}
+                  >
+                    <Text style={styles.addLinkedActivityBtnText}>＋ Save Activity First</Text>
+                  </TouchableOpacity>
                 </View>
               )}
               {/* ──────────────────────────────────────────────────────────────── */}
@@ -3130,6 +3470,162 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             </View>
           </View>
         </SafeAreaView>
+      </Modal>
+
+      {/* Link Activity Modal - for linking existing activities */}
+      <Modal
+        visible={showLinkActivityModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowLinkActivityModal(false)}
+      >
+        <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <TouchableOpacity onPress={() => {
+                    Keyboard.dismiss();
+                    setShowLinkActivityModal(false);
+                  }}>
+                    <Text style={styles.closeButton}>← Back</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.modalTitle}>Link Activity</Text>
+                  <TouchableOpacity onPress={() => {
+                    Keyboard.dismiss();
+                    handleLinkActivities();
+                  }}>
+                    <Text style={styles.doneButton}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView style={styles.formContainer} keyboardShouldPersistTaps="handled">
+                  {/* Select Target Activity */}
+                  <View style={styles.formSection}>
+                    <Text style={styles.label}>Link To Activity *</Text>
+                    <Text style={styles.helperText}>
+                      Select the activity you want to link this to. This activity will become a child/linked activity. You can link already-linked activities (hierarchical linking allowed).
+                    </Text>
+                    <View style={styles.pickerContainer}>
+                      {timechart.activities
+                        .filter(a => {
+                          // Exclude source activity (self-linking not allowed)
+                          if (a.id === linkingSourceActivityId) return false;
+                          
+                          // HIERARCHICAL LINKING: Allow any activity (including those with parents) to be a target
+                          // This enables: Activity A → B → C (chain linking)
+                          return true;
+                        })
+                        .map((activity) => (
+                          <TouchableOpacity
+                            key={activity.id}
+                            style={[
+                              styles.contractorOption,
+                              selectedLinkTargetActivityId === activity.id && styles.contractorOptionSelected,
+                            ]}
+                            onPress={() => {
+                              console.log('🔗 [LINK-MODAL] Target activity selected:', {
+                                targetId: activity.id,
+                                targetName: activity.name,
+                                sourceId: linkingSourceActivityId,
+                              });
+                              setSelectedLinkTargetActivityId(activity.id);
+                            }}
+                          >
+                            <View
+                              style={[
+                                styles.contractorOptionColor,
+                                { backgroundColor: activity.floorLevelColor },
+                              ]}
+                            />
+                            <Text
+                              style={[
+                                styles.contractorOptionText,
+                                selectedLinkTargetActivityId === activity.id && styles.contractorOptionTextSelected,
+                              ]}
+                            >
+                              {activity.name}
+                            </Text>
+                            {selectedLinkTargetActivityId === activity.id && (
+                              <Text style={styles.checkmark}>✓</Text>
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                    </View>
+                  </View>
+
+                  {/* Select Offset */}
+                  <View style={styles.formSection}>
+                    <Text style={styles.label}>Offset (days) *</Text>
+                    <Text style={styles.helperText}>
+                      When should this linked activity start relative to the parent activity end?
+                    </Text>
+                    <View style={styles.linkedOffsetRow}>
+                      {[-2, -1, 0, 1, 2].map(preset => (
+                        <TouchableOpacity
+                          key={preset}
+                          style={[
+                            styles.linkedOffsetChip,
+                            !linkUseCustomOffset && linkOffsetDays === preset && styles.linkedOffsetChipSelected,
+                          ]}
+                          onPress={() => {
+                            setLinkOffsetDays(preset);
+                            setLinkUseCustomOffset(false);
+                          }}
+                        >
+                          <Text style={[
+                            styles.linkedOffsetChipText,
+                            !linkUseCustomOffset && linkOffsetDays === preset && styles.linkedOffsetChipTextSelected,
+                          ]}>
+                            {preset > 0 ? `+${preset}` : preset === 0 ? '0' : `${preset}`}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                      <TouchableOpacity
+                        style={[styles.linkedOffsetChip, linkUseCustomOffset && styles.linkedOffsetChipSelected]}
+                        onPress={() => setLinkUseCustomOffset(true)}
+                      >
+                        <Text style={[styles.linkedOffsetChipText, linkUseCustomOffset && styles.linkedOffsetChipTextSelected]}>
+                          Custom
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {linkUseCustomOffset && (
+                      <View style={styles.linkedCustomOffsetRow}>
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          placeholder="e.g., 3 or -3"
+                          placeholderTextColor="#999"
+                          value={linkCustomOffset}
+                          onChangeText={setLinkCustomOffset}
+                          keyboardType="numbers-and-punctuation"
+                        />
+                      </View>
+                    )}
+                    <Text style={styles.helperText}>
+                      {linkUseCustomOffset
+                        ? (parseInt(linkCustomOffset) > 0
+                            ? `Linked activity starts ${linkCustomOffset} day(s) after parent ends`
+                            : parseInt(linkCustomOffset) < 0
+                              ? `Linked activity starts ${Math.abs(parseInt(linkCustomOffset))} day(s) before parent ends`
+                              : parseInt(linkCustomOffset) === 0
+                                ? 'Linked activity starts on the same day parent ends'
+                                : 'Enter offset')
+                        : (linkOffsetDays > 0
+                            ? `Linked activity starts ${linkOffsetDays} day(s) after parent ends`
+                            : linkOffsetDays === 0
+                              ? 'Linked activity starts on the same day parent ends'
+                              : `Linked activity starts ${Math.abs(linkOffsetDays)} day(s) before parent ends`)
+                      }
+                    </Text>
+                  </View>
+
+                  <View style={styles.divider} />
+                </ScrollView>
+              </View>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
