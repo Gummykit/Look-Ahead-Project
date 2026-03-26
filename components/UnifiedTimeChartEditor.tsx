@@ -1946,8 +1946,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       const rowOpacity = rowMatchesFilter ? 1 : 0.25;
 
       return (
-        <View key={`activity-group-${group.groupKey}`} style={{ opacity: rowOpacity }}>
-            {/* Parent Activity Row (Grouped if multiple floors) */}
+        <View key={`activity-group-${group.groupKey}`}>
+          {/* Parent Activity Row (Grouped if multiple floors) — wrapped separately so children can have independent opacity */}
+          <View style={{ opacity: rowOpacity }}>
             <View style={styles.activityRowContainer}>
               <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
                 <Text 
@@ -2070,8 +2071,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 {renderDateCells(activities, activityStartDay)}
               </View>
             </View>
+          </View>
 
-            {/* Linked Activity Rows — appear directly below the parent */}
+          {/* Linked Activity Rows — appear directly below the parent (OUTSIDE parent opacity wrapper) */}
             {linkedActivityRows.map((linkedActivity) => {
               const linkedStartDay = getDaysBetween(timechart.startDate, linkedActivity.startDate);
               console.log('🎨 [RenderChild] Rendering child activity:', {
@@ -2091,8 +2093,13 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               const linkedContractorName = linkedContractorNames.length > 0
                 ? linkedContractorNames.join(', ')
                 : 'Unassigned';
+              
+              // Check if child activity matches the active floor filter
+              const childMatchesFilter = activeFloorFilter === null || linkedActivity.floorLevelId === activeFloorFilter;
+              const childOpacity = childMatchesFilter ? 1 : 0.25;
+              
               return (
-                <View key={`linked-${linkedActivity.id}`} style={[styles.activityRowContainer, styles.linkedActivityRow]}>
+                <View key={`linked-${linkedActivity.id}`} style={[styles.activityRowContainer, styles.linkedActivityRow, { opacity: childOpacity }]}>
                   <View style={[styles.cell, styles.activityCell, { width: ACTIVITY_LABEL_WIDTH }]}>
                     <Text
                       style={[
