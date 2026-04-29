@@ -395,15 +395,38 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const DAY_WIDTH = 50;
   const ACTIVITY_LABEL_WIDTH = 150;
   const CONTRACTOR_LABEL_WIDTH = 200;
+  const DURATION_LABEL_WIDTH = 100;
+  
+  // Inline form column widths (single cell tight fit)
+  const INLINE_ACTIVITY_WIDTH = 80;
+  const INLINE_CONTRACTOR_WIDTH = 90;
+  const INLINE_DURATION_WIDTH = 80;
 
   const totalDays = getDaysBetween(timechart.startDate, timechart.endDate) + 1;
-  const chartWidth = totalDays * DAY_WIDTH + ACTIVITY_LABEL_WIDTH + CONTRACTOR_LABEL_WIDTH;
+  const chartWidth = totalDays * DAY_WIDTH + ACTIVITY_LABEL_WIDTH + CONTRACTOR_LABEL_WIDTH + DURATION_LABEL_WIDTH;
 
   const [showAddHolidayModal, setShowAddHolidayModal] = useState(false);
   const [showAddActivityModal, setShowAddActivityModal] = useState(false);
   const [showAddContractorModal, setShowAddContractorModal] = useState(false);
   const [showManagePanelModal, setShowManagePanelModal] = useState(false);
   const [showFloorLevelModal, setShowFloorLevelModal] = useState(false);
+  // Auto-linking prompt modal state
+  const [showAutoLinkPrompt, setShowAutoLinkPrompt] = useState(false);
+  const [autoLinkPending, setAutoLinkPending] = useState<{
+    draggedActivityId: string;
+    draggedActivityName: string;
+    potentialParentId: string;
+    potentialParentName: string;
+  } | null>(null);
+
+  // Non-working day prompt modal state
+  const [showNonWorkingDayPrompt, setShowNonWorkingDayPrompt] = useState(false);
+  const [nonWorkingDayPending, setNonWorkingDayPending] = useState<{
+    dayIndex: number;
+    dateString: string;
+    displayDate: string;
+    isRemoving: boolean;
+  } | null>(null);
 
   const [holidayName, setHolidayName] = useState('');
   const [holidayDate, setHolidayDate] = useState('');
@@ -417,7 +440,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [startActivityDate, setStartActivityDate] = useState(
     new Date(timechart.startDate).toISOString().split('T')[0]
   );
-  const [activityDuration, setActivityDuration] = useState('7');
+  const [activityDuration, setActivityDuration] = useState('0');
   // Multi-contractor selection for Add/Edit Activity modal
   // (replaces the old single selectedSubcontractor state)
   const [selectedSubcontractorIds, setSelectedSubcontractorIds] = useState<string[]>([]);
@@ -451,6 +474,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   useEffect(() => {
     linkedActivitiesRef.current = linkedActivities;
   }, [linkedActivities]);
+  
   // State for the currently-open "Add Linked Activity" inline form (-1 = none)
   const [addingLinkedActivityIndex, setAddingLinkedActivityIndex] = useState<number | null>(null);
   // Form state for the linked activity being drafted
@@ -458,7 +482,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [linkedOffsetDays, setLinkedOffsetDays] = useState(1);
   const [linkedCustomOffset, setLinkedCustomOffset] = useState('');
   const [linkedUseCustomOffset, setLinkedUseCustomOffset] = useState(false);
-  const [linkedDuration, setLinkedDuration] = useState('7');
+  const [linkedDuration, setLinkedDuration] = useState('0');
   const [linkedFloorLevelId, setLinkedFloorLevelId] = useState<string>('');
   const [linkedSubcontractorIds, setLinkedSubcontractorIds] = useState<string[]>([]);
   // ──────────────────────────────────────────────────────────────────────────
@@ -514,6 +538,32 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   // Double-tap detection state
   const [lastTapTime, setLastTapTime] = useState(0);
   const [lastTappedCell, setLastTappedCell] = useState<string | null>(null);
+
+  // Inline new activity row state (instead of modal)
+  const [showInlineNewActivity, setShowInlineNewActivity] = useState(false);
+  const [inlineActivityName, setInlineActivityName] = useState('');
+  const [inlineActivityContractor, setInlineActivityContractor] = useState<string | null>(
+    timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null
+  );
+  const [inlineActivityDuration, setInlineActivityDuration] = useState(0);
+  const [inlineActivityFloor, setInlineActivityFloor] = useState<string | null>(
+    (timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null
+  );
+  
+  // Reset inline form state when user clicks "+ Add Activity"
+  useEffect(() => {
+    if (showInlineNewActivity) {
+      // Reset form fields to defaults
+      setInlineActivityName('');
+      setInlineActivityDuration(7);
+      // Set contractor to first available, or null
+      const defaultContractor = timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null;
+      setInlineActivityContractor(defaultContractor);
+      // Set floor to first available, or null
+      const defaultFloor = (timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null;
+      setInlineActivityFloor(defaultFloor);
+    }
+  }, [showInlineNewActivity, timechart.subcontractors, timechart.floorLevels]);
   
   const FLOOR_LEVEL_COLORS = [
     '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
@@ -565,6 +615,69 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setHolidayDate('');
     setHolidayType('non-working-day');
     setShowAddHolidayModal(false);
+  };
+
+  // Handle adding activity directly from inline row (no modal)
+  const handleInlineActivitySubmit = () => {
+    if (user && !canPerformAction(user.role, 'canAddActivity')) {
+      Alert.alert('Permission Denied', 'You do not have permission to add activities.');
+      return;
+    }
+
+    if (!inlineActivityName.trim()) {
+      Alert.alert('Error', 'Please enter activity name');
+      return;
+    }
+
+    const genId = () => Math.random().toString(36).substr(2, 9);
+    const activityId = genId();
+    const startDate = new Date(timechart.startDate);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + inlineActivityDuration - 1);
+
+    const floorLevel = (timechart.floorLevels || []).find(f => f.id === inlineActivityFloor);
+    const contractor = timechart.subcontractors.find(s => s.id === inlineActivityContractor);
+
+    // Format dates as YYYY-MM-DD strings (required by activity model)
+    const formatDate = (date: Date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
+    const newActivity = {
+      id: activityId,
+      name: inlineActivityName.trim(),
+      startDate: formatDate(startDate),
+      endDate: formatDate(endDate),
+      duration: inlineActivityDuration,
+      subcontractorId: contractor?.id || '',
+      subcontractorName: contractor?.name || 'Unassigned',
+      subcontractorIds: [contractor?.id || ''],
+      subcontractorNames: [contractor?.name || 'Unassigned'],
+      floorLevelId: inlineActivityFloor || '',
+      floorLevelName: floorLevel?.name || 'Ground',
+      floorLevelColor: floorLevel?.color || '#FF6B6B',
+      childActivityIds: [],
+    };
+
+    if (onAddActivities) {
+      onAddActivities([newActivity]);
+    }
+
+    // Reset inline form - ensure contractor and floor are valid for next use
+    setShowInlineNewActivity(false);
+    setInlineActivityName('');
+    setInlineActivityDuration(7);
+    // Set to first available contractor, or null if none exist
+    const nextContractor = timechart.subcontractors.length > 0 ? timechart.subcontractors[0].id : null;
+    setInlineActivityContractor(nextContractor);
+    // Set to first available floor, or null if none exist
+    const nextFloor = (timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null;
+    setInlineActivityFloor(nextFloor);
   };
 
   const handleAddActivity = () => {
@@ -1229,7 +1342,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   };
 
   const handleActivityPressOut = () => {
+    console.log('🔵 [Drag] handleActivityPressOut() called');
+    
     if (!draggingActivityId || !dragActivity) {
+      console.log('🔵 [Drag] No dragging activity, returning early');
       setDraggingActivityId(null);
       setDragActivity(null);
       return;
@@ -1244,14 +1360,38 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     const childActivityIds = activity?.childActivityIds || [];
     const childrenByParentId = timechart.activities.filter(a => a.parentActivityId === draggingActivityId).map(a => a.id);
     
+    console.log('🔵 [Drag] Searching for children of', draggingActivityId, ':', {
+      allActivities: timechart.activities.map(a => ({ 
+        id: a.id, 
+        name: a.name, 
+        parentActivityId: a.parentActivityId,
+        startDate: typeof a.startDate === 'string' ? a.startDate : (a.startDate instanceof Date ? a.startDate.toISOString().split('T')[0] : 'unknown')
+      })),
+      childrenByParentId: childrenByParentId,
+    });
+    
+    // Debug: Log the dragging activity's details
+    console.log('🔵 [Drag] Activity being dragged:', {
+      activityId: draggingActivityId,
+      name: activity?.name,
+      parentActivityId: activity?.parentActivityId,
+      startDate: typeof activity?.startDate === 'string' ? activity.startDate : (activity?.startDate instanceof Date ? activity.startDate.toISOString().split('T')[0] : 'unknown'),
+    });
+    
     // Use whichever has content, prefer parentActivityId method as it's more reliable
     const directChildIds = childrenByParentId.length > 0 ? childrenByParentId : childActivityIds;
+    
+    // IMPORTANT: Check if THIS activity is a child of another activity
+    const parentActivityId = activity?.parentActivityId;
+    const hasParent = !!parentActivityId;
     
     console.log('🔵 [Drag] Activity press out:', {
       activityId: draggingActivityId,
       childActivityIds: childActivityIds,
       childrenByParentId: childrenByParentId,
       usingDirectChildIds: directChildIds,
+      parentActivityId: parentActivityId,
+      hasParent: hasParent,
     });
     
     // Helper function to recursively find all descendants (children, grandchildren, etc.)
@@ -1334,13 +1474,33 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       console.log('🔵 [Drag] Updating', allDescendantIds.length, 'descendants with offset', offset, '- descendantIds:', allDescendantIds);
 
       // Call a special update method that handles parent + children together
+      console.log('🔵 [Drag] Child updates to send:', {
+        parentId: draggingActivityId,
+        parentNewStart: dragActivity.startDate,
+        parentNewEnd: dragActivity.endDate,
+        childUpdatesCount: childUpdatesData.length,
+        childUpdatesData: childUpdatesData,
+      });
+      
       onUpdateActivity(draggingActivityId, {
         startDate: dragActivity.startDate,
         endDate: dragActivity.endDate,
         duration: getDaysBetween(dragActivity.startDate, dragActivity.endDate),
         childUpdates: childUpdatesData, // Pass child updates as part of parent update
       });
+      console.log('🔗 [Auto-Link] SKIPPED - Activity is parent with children, auto-linking not checked');
+    } else if (hasParent) {
+      // This activity is a CHILD - it can be dragged independently
+      // The parent will NOT move with the child (child becomes offset from parent)
+      console.log('🔵 [Drag] Activity is a child with parentActivityId:', parentActivityId, ', updating child independently');
+      onUpdateActivity(draggingActivityId, {
+        startDate: dragActivity.startDate,
+        endDate: dragActivity.endDate,
+        duration: getDaysBetween(dragActivity.startDate, dragActivity.endDate),
+      });
+      console.log('🔗 [Auto-Link] SKIPPED - Activity is a child, auto-linking disabled for children');
     } else {
+      console.log('🔗 [Auto-Link] Activity has NO children, proceeding with auto-linking detection');
       // Regular activity without children - update normally
       console.log('🔵 [Drag] No children found, updating parent only');
       onUpdateActivity(draggingActivityId, {
@@ -1348,10 +1508,85 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         endDate: dragActivity.endDate,
         duration: getDaysBetween(dragActivity.startDate, dragActivity.endDate),
       });
+
+      // ─── Auto-linking Detection ───────────────────────────────────────────
+      // Check if this activity is positioned right after another activity on the same floor
+      // and suggest linking if the conditions are met
+      const draggedActivityFloor = activity?.floorLevelId;
+      
+      console.log('🔗 [Auto-Link] Starting detection:', {
+        draggedActivityId: draggingActivityId,
+        draggedActivityFloor: draggedActivityFloor,
+        dragActivityStartDate: dragActivity.startDate,
+        activityParentId: activity?.parentActivityId,
+      });
+      
+      // Find all activities on the same floor (excluding the one being dragged)
+      const activitiesOnSameFloor = timechart.activities.filter(
+        a => a.floorLevelId === draggedActivityFloor && a.id !== draggingActivityId
+      );
+
+      console.log('🔗 [Auto-Link] Activities on same floor:', {
+        count: activitiesOnSameFloor.length,
+        activities: activitiesOnSameFloor.map(a => ({
+          id: a.id,
+          name: a.name,
+          endDate: a.endDate,
+          floor: a.floorLevelId,
+        })),
+      });
+
+      // Check if any activity ends exactly on the day this activity starts
+      const potentialParent = activitiesOnSameFloor.find(
+        a => {
+          const parentEndStr = new Date(a.endDate).toDateString();
+          const dragStartStr = new Date(dragActivity.startDate).toDateString();
+          console.log(`🔗 [Auto-Link] Comparing: "${a.name}" ends ${parentEndStr} vs drags starts ${dragStartStr}`);
+          return parentEndStr === dragStartStr;
+        }
+      );
+
+      console.log('🔗 [Auto-Link] Detection result:', {
+        potentialParentFound: !!potentialParent,
+        potentialParentName: potentialParent?.name,
+        activityHasParent: !!activity?.parentActivityId,
+        shouldShowPrompt: !!potentialParent && !activity?.parentActivityId,
+      });
+
+      if (potentialParent && !activity?.parentActivityId) {
+        // Show prompt asking if user wants to link the activities
+        console.log('🔗 [Auto-Link] Detected activity positioned right after another activity', {
+          draggedActivityId: draggingActivityId,
+          draggedActivityName: dragActivity.name,
+          potentialParentId: potentialParent.id,
+          potentialParentName: potentialParent.name,
+          draggedActivityFloor: draggedActivityFloor,
+        });
+
+        // Reset drag state FIRST (exit gesture handler completely before showing modal)
+        setDraggingActivityId(null);
+        setDragActivity(null);
+
+        // Use setTimeout to ensure modal shows after drag handler is fully exited and gesture state resets
+        setTimeout(() => {
+          console.log('🔗 [Auto-Link] About to show linking prompt modal');
+          // Store the linking data and show custom modal instead of Alert.alert()
+          setAutoLinkPending({
+            draggedActivityId: draggingActivityId,
+            draggedActivityName: dragActivity.name,
+            potentialParentId: potentialParent.id,
+            potentialParentName: potentialParent.name,
+          });
+          setShowAutoLinkPrompt(true);
+        }, 150); // Delay to allow drag handler to fully exit and gesture state to reset
+      }
     }
 
-    setDraggingActivityId(null);
-    setDragActivity(null);
+    // Only reset drag state if we haven't already done so above
+    if (draggingActivityId) {
+      setDraggingActivityId(null);
+      setDragActivity(null);
+    }
   };
 
   // ─── Segment-level drag handlers ───────────────────────────────────────────
@@ -1547,14 +1782,41 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     }
   };
 
+  // Quick add floor with random color
+  const handleQuickAddFloor = () => {
+    const FLOOR_LEVEL_COLORS = [
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+      '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B88B', '#ABEBC6'
+    ];
+    
+    // Pick a random color
+    const randomColor = FLOOR_LEVEL_COLORS[Math.floor(Math.random() * FLOOR_LEVEL_COLORS.length)];
+    
+    // Generate a default name based on floor count
+    const floorCount = (timechart.floorLevels || []).length + 1;
+    const newFloorName = `Floor ${floorCount}`;
+    
+    // Call the parent handler to add the floor
+    onAddFloorLevel({
+      name: newFloorName,
+      color: randomColor,
+    });
+  };
+
   // Group activities by name and contractor ID
   const groupActivitiesByNameAndContractor = () => {
     const groupedMap = new Map<string, Activity[]>();
     
     (timechart.activities || [])
-      .filter(activity => !activity.parentActivityId) // Only parent activities
       .forEach(activity => {
-        const groupKey = `${activity.name}|${activity.subcontractorId}`;
+        // For grouping, use the parent activity if this is a child, otherwise use self
+        const sourceActivity = activity.parentActivityId 
+          ? timechart.activities.find(a => a.id === activity.parentActivityId)
+          : activity;
+        
+        if (!sourceActivity) return; // Skip if parent not found
+        
+        const groupKey = `${sourceActivity.name}|${sourceActivity.subcontractorId}`;
         if (!groupedMap.has(groupKey)) {
           groupedMap.set(groupKey, []);
         }
@@ -1565,12 +1827,20 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     // so that dragging an activity to an earlier date never re-orders the rows.
     return Array.from(groupedMap.values())
       .map(group => {
-        // Capture the first-inserted ID BEFORE sorting the group by floorLevelId,
-        // so the stable sort key always refers to the original insertion order.
-        const firstId = group[0].id;
+        // Sort so parent activities come first, then children
+        const sortedGroup = group.sort((a, b) => {
+          // Parents (no parentActivityId) come first
+          if (!a.parentActivityId && b.parentActivityId) return -1;
+          if (a.parentActivityId && !b.parentActivityId) return 1;
+          // Then sort by floorLevelId
+          return (a.floorLevelId || '').localeCompare(b.floorLevelId || '');
+        });
+        
+        // Capture the first-inserted ID AFTER sorting so parent is used as stable sort key
+        const firstId = sortedGroup[0].id;
         return {
-          activities: group.sort((a, b) => (a.floorLevelId || '').localeCompare(b.floorLevelId || '')),
-          groupKey: (group[0].subcontractorId || '') + (group[0].name || ''),
+          activities: sortedGroup,
+          groupKey: (sortedGroup[0].subcontractorId || '') + (sortedGroup[0].name || ''),
           firstId,
         };
       })
@@ -1580,6 +1850,25 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         const bIndex = timechart.activities.findIndex(act => act.id === b.firstId);
         return aIndex - bIndex;
       });
+  };
+
+  const handleDayHeaderRightClick = (dayIndex: number) => {
+    const currentDate = new Date(timechart.startDate);
+    currentDate.setDate(currentDate.getDate() + dayIndex);
+    
+    const dateString = currentDate.toISOString().split('T')[0];
+    const isAlreadyNonWorking = isNonWorkingDay(currentDate, timechart.nonWorkingDays || []);
+    const displayDate = currentDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    
+    console.log('🟢 [NonWorkingDay] Day header clicked:', { dayIndex, dateString, isAlreadyNonWorking });
+    
+    setNonWorkingDayPending({
+      dayIndex,
+      dateString,
+      displayDate,
+      isRemoving: isAlreadyNonWorking,
+    });
+    setShowNonWorkingDayPrompt(true);
   };
 
   const renderDayHeaders = () => {
@@ -1596,10 +1885,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
       let backgroundColor = '#FFF';
       if (isHoliday) backgroundColor = '#FFE0E0';
-      if (isWeekend) backgroundColor = '#F0F0F0';
+      if (isWeekend) backgroundColor = '#FFE0E0'; // Sunday shown as non-working day (red/pink)
 
       items.push(
-        <View
+        <TouchableOpacity
           key={`day-${i}`}
           style={[
             styles.dayHeaderCell,
@@ -1608,10 +1897,17 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               backgroundColor,
             },
           ]}
+          onLongPress={() => handleDayHeaderRightClick(i)}
+          onPress={() => {}} // Prevent default press behavior
+          // @ts-ignore - Web support for context menu
+          onContextMenu={(e: any) => {
+            e?.preventDefault?.();
+            handleDayHeaderRightClick(i);
+          }}
         >
           <Text style={styles.dayHeaderText}>{dayName}</Text>
           <Text style={styles.dateText}>{dayOfMonth}</Text>
-        </View>
+        </TouchableOpacity>
       );
     }
 
@@ -1743,9 +2039,15 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 backgroundColor,
               },
             ]}
-            onStartShouldSetResponder={() => !isGrouped}
-            onMoveShouldSetResponder={() => !isGrouped && draggingActivityId === primaryActivity.id}
-            onResponderGrant={(event) => !isGrouped && handleActivityPressIn(primaryActivity, event)}
+            onStartShouldSetResponder={() => true}
+            onMoveShouldSetResponder={() => draggingActivityId === primaryActivity.id || (isGrouped && draggingSegmentId === null)}
+            onResponderGrant={(event) => {
+              // For non-grouped: drag the primary activity
+              // For grouped: drag the primary activity ONLY if no segment drag is in progress
+              if (!isGrouped || draggingSegmentId === null) {
+                handleActivityPressIn(primaryActivity, event);
+              }
+            }}
             onResponderMove={handleActivityPressMove}
             onResponderRelease={handleActivityPressOut}
           >
@@ -1873,7 +2175,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
     return groupedActivities.map((group) => {
       const activities = group.activities;
-      const primaryActivity = activities[0]; // Use first activity as primary
+      // Find the parent activity (one without parentActivityId), or use first if all are children
+      const parentActivity = activities.find(a => !a.parentActivityId) || activities[0];
+      const primaryActivity = parentActivity; // Use parent as primary for the row
       const isGrouped = activities.length > 1;
 
       const activityStartDay = getDaysBetween(timechart.startDate, primaryActivity.startDate);
@@ -2236,12 +2540,6 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         >
           <Text style={styles.controlButtonText}>+ Contractor</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.controlButton}
-          onPress={() => setShowFloorLevelModal(true)}
-        >
-          <Text style={styles.controlButtonText}>+ Floor Level</Text>
-        </TouchableOpacity>
         {/* Only show Manage button for users with edit permissions */}
         {!user || canPerformAction(user.role, 'canEdit') ? (
           <TouchableOpacity
@@ -2264,58 +2562,72 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
 
       {/* Floor Filter Bar */}
       {timechart.floorLevels && timechart.floorLevels.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.floorFilterBar}
-          contentContainerStyle={styles.floorFilterBarContent}
-        >
-          {/* "All Floors" chip */}
-          <TouchableOpacity
-            style={[
-              styles.floorFilterChip,
-              activeFloorFilter === null && styles.floorFilterChipAll,
-            ]}
-            onPress={() => setActiveFloorFilter(null)}
+        <View style={styles.floorFilterBarContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.floorFilterBar}
+            contentContainerStyle={styles.floorFilterBarContent}
           >
-            <Text style={[
-              styles.floorFilterChipText,
-              activeFloorFilter === null && styles.floorFilterChipTextActive,
-            ]}>
-              All Floors
-            </Text>
-          </TouchableOpacity>
+            {/* "All Floors" chip */}
+            <TouchableOpacity
+              style={[
+                styles.floorFilterChip,
+                activeFloorFilter === null && styles.floorFilterChipAll,
+              ]}
+              onPress={() => setActiveFloorFilter(null)}
+            >
+              <Text style={[
+                styles.floorFilterChipText,
+                activeFloorFilter === null && styles.floorFilterChipTextActive,
+              ]}>
+                All Floors
+              </Text>
+            </TouchableOpacity>
 
-          {timechart.floorLevels.map((floor) => {
-            const isActive = activeFloorFilter === floor.id;
-            return (
-              <TouchableOpacity
-                key={floor.id}
-                style={[
-                  styles.floorFilterChip,
-                  isActive && { borderColor: floor.color, backgroundColor: floor.color },
-                ]}
-                onPress={() => setActiveFloorFilter(isActive ? null : floor.id)}
-              >
-                <View style={[styles.floorFilterChipDot, { backgroundColor: isActive ? '#FFF' : floor.color }]} />
-                <Text style={[
-                  styles.floorFilterChipText,
-                  isActive && styles.floorFilterChipTextActive,
-                ]}>
-                  {floor.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+            {timechart.floorLevels.map((floor) => {
+              const isActive = activeFloorFilter === floor.id;
+              return (
+                <TouchableOpacity
+                  key={floor.id}
+                  style={[
+                    styles.floorFilterChip,
+                    isActive && { borderColor: floor.color, backgroundColor: floor.color },
+                  ]}
+                  onPress={() => setActiveFloorFilter(isActive ? null : floor.id)}
+                >
+                  <View style={[styles.floorFilterChipDot, { backgroundColor: isActive ? '#FFF' : floor.color }]} />
+                  <Text style={[
+                    styles.floorFilterChipText,
+                    isActive && styles.floorFilterChipTextActive,
+                  ]}>
+                    {floor.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          
+          {/* Quick Add Floor Button */}
+          <TouchableOpacity
+            style={styles.quickAddFloorButton}
+            onPress={handleQuickAddFloor}
+          >
+            <Text style={styles.quickAddFloorButtonText}>+</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
-      {/* Timechart */}
+      {/* Timechart Container - Vertical ScrollView wraps horizontal ScrollView */}
       <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={true}
-        contentContainerStyle={{ width: Math.max(chartWidth, width - 16) }}
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={true}
       >
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={true}
+          contentContainerStyle={{ width: Math.max(chartWidth, width - 16) }}
+        >
         <View>
           {/* Month Header Row */}
           <View style={styles.monthHeaderRow}>
@@ -2353,16 +2665,104 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               </View>
             )}
 
-            {/* Inline Add Activity button — pinned to the left label columns */}
+            {/* Inline Add Activity Row - Direct Input instead of Modal */}
             {(!user || canPerformAction(user.role, 'canAddActivity')) && (
-              <View style={styles.inlineAddActivityRow}>
-                <TouchableOpacity
-                  style={[styles.inlineAddActivityButton, { width: ACTIVITY_LABEL_WIDTH + CONTRACTOR_LABEL_WIDTH - 16 }]}
-                  onPress={() => setShowAddActivityModal(true)}
-                >
-                  <Text style={styles.inlineAddActivityButtonText}>＋ Add Activity</Text>
-                </TouchableOpacity>
-              </View>
+              <>
+                {!showInlineNewActivity ? (
+                  // Show "+ Add Activity" button
+                  <View style={styles.inlineAddActivityRow}>
+                    <TouchableOpacity
+                      style={[styles.inlineAddActivityButton, { width: ACTIVITY_LABEL_WIDTH + CONTRACTOR_LABEL_WIDTH + DURATION_LABEL_WIDTH - 16 }]}
+                      onPress={() => setShowInlineNewActivity(true)}
+                    >
+                      <Text style={styles.inlineAddActivityButtonText}>＋ Add Activity</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  // Show inline input row
+                  <View style={styles.inlineActivityInputRow}>
+                    {/* Activity Name Input */}
+                    <View style={[styles.cell, styles.inlineInputCell, { width: INLINE_ACTIVITY_WIDTH }]}>
+                      <TextInput
+                        style={styles.inlineTextInput}
+                        placeholder="Activity Name"
+                        placeholderTextColor="#AAA"
+                        value={inlineActivityName}
+                        onChangeText={setInlineActivityName}
+                        editable={!user || canPerformAction(user.role, 'canEditActivity')}
+                      />
+                    </View>
+
+                    {/* Contractor Dropdown */}
+                    <View style={[styles.cell, styles.inlineInputCell, { width: INLINE_CONTRACTOR_WIDTH }]}>
+                      <View style={styles.inlineDropdown}>
+                        <Text style={styles.inlineDropdownValue}>
+                          {timechart.subcontractors.find(s => s.id === inlineActivityContractor)?.name || 'Select...'}
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.inlineDropdownButton}
+                          onPress={() => {
+                            // Simple dropdown - cycle through contractors
+                            const currentIndex = timechart.subcontractors.findIndex(s => s.id === inlineActivityContractor);
+                            const nextIndex = (currentIndex + 1) % timechart.subcontractors.length;
+                            setInlineActivityContractor(timechart.subcontractors[nextIndex]?.id || null);
+                          }}
+                        >
+                          <Text style={styles.inlineDropdownButtonText}>▼</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Duration Stepper */}
+                    <View style={[styles.cell, styles.inlineInputCell, { width: INLINE_DURATION_WIDTH }]}>
+                      <View style={styles.inlineDurationStepper}>
+                        <TouchableOpacity
+                          style={styles.inlineDurationBtn}
+                          onPress={() => setInlineActivityDuration(Math.max(1, inlineActivityDuration - 1))}
+                        >
+                          <Text style={styles.inlineDurationBtnText}>−</Text>
+                        </TouchableOpacity>
+                        <TextInput
+                          style={styles.inlineDurationInput}
+                          value={String(inlineActivityDuration)}
+                          onChangeText={(val) => {
+                            const num = parseInt(val) || 1;
+                            if (num > 0) setInlineActivityDuration(num);
+                          }}
+                          keyboardType="numeric"
+                          textAlign="center"
+                        />
+                        <TouchableOpacity
+                          style={styles.inlineDurationBtn}
+                          onPress={() => setInlineActivityDuration(inlineActivityDuration + 1)}
+                        >
+                          <Text style={styles.inlineDurationBtnText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Action Buttons */}
+                    <View style={styles.inlineActionButtons}>
+                      <TouchableOpacity
+                        style={styles.inlineAddBtn}
+                        onPress={handleInlineActivitySubmit}
+                      >
+                        <Text style={styles.inlineAddBtnText}>✓ Add</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.inlineCancelBtn}
+                        onPress={() => {
+                          setShowInlineNewActivity(false);
+                          setInlineActivityName('');
+                          setInlineActivityDuration(7);
+                        }}
+                      >
+                        <Text style={styles.inlineCancelBtnText}>✕ Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </>
             )}
           </View>
 
@@ -2404,6 +2804,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <Text style={styles.helpText}>📝 Double-tap an activity bar to log daily work notes & photos</Text>
           </View>
         </View>
+        </ScrollView>
       </ScrollView>
 
       {/* Send Mail Notification Button */}
@@ -3634,6 +4035,158 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Auto-Linking Prompt Modal */}
+      <Modal
+        visible={showAutoLinkPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAutoLinkPrompt(false)}
+      >
+        <View style={styles.autoLinkOverlay}>
+          <View style={styles.autoLinkPromptCard}>
+            <Text style={styles.autoLinkTitle}>Link Activities?</Text>
+            
+            <Text style={styles.autoLinkMessage}>
+              Would you like to link{' '}
+              <Text style={styles.autoLinkActivityName}>&quot;{autoLinkPending?.draggedActivityName}&quot;</Text>
+              {' '}to{' '}
+              <Text style={styles.autoLinkActivityName}>&quot;{autoLinkPending?.potentialParentName}&quot;</Text>
+              ?
+            </Text>
+            
+            <Text style={styles.autoLinkDescription}>
+              This will create a dependency where the linked activity will automatically follow the parent activity.
+            </Text>
+
+            <View style={styles.autoLinkButtonContainer}>
+              <TouchableOpacity
+                style={[styles.autoLinkButton, styles.autoLinkButtonNo]}
+                onPress={() => {
+                  console.log('🔗 [Auto-Link] User declined linking');
+                  setShowAutoLinkPrompt(false);
+                  setAutoLinkPending(null);
+                }}
+              >
+                <Text style={styles.autoLinkButtonTextNo}>No</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.autoLinkButton, styles.autoLinkButtonYes]}
+                onPress={() => {
+                  console.log('🔗 [Auto-Link] User accepted linking, creating link now');
+                  console.log('🔗 [Auto-Link] autoLinkPending:', autoLinkPending);
+                  
+                  if (autoLinkPending) {
+                    console.log('🔗 [Auto-Link] Calling onUpdateActivity with:', {
+                      draggedActivityId: autoLinkPending.draggedActivityId,
+                      parentActivityId: autoLinkPending.potentialParentId,
+                    });
+                    
+                    // Call the update callback
+                    onUpdateActivity(autoLinkPending.draggedActivityId, {
+                      parentActivityId: autoLinkPending.potentialParentId,
+                    });
+                    
+                    console.log('🔗 [Auto-Link] onUpdateActivity called successfully');
+                  } else {
+                    console.log('🔗 [Auto-Link] ERROR: autoLinkPending is null!');
+                  }
+                  
+                  // Close modal after update
+                  setShowAutoLinkPrompt(false);
+                  setAutoLinkPending(null);
+                  console.log('🔗 [Auto-Link] Modal closed, state cleared');
+                }}
+              >
+                <Text style={styles.autoLinkButtonTextYes}>Yes, Link</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Non-Working Day Prompt Modal */}
+      <Modal
+        visible={showNonWorkingDayPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowNonWorkingDayPrompt(false)}
+      >
+        <View style={styles.autoLinkOverlay}>
+          <View style={styles.autoLinkPromptCard}>
+            <Text style={styles.autoLinkTitle}>
+              {nonWorkingDayPending?.isRemoving ? 'Remove Non-Working Day?' : 'Mark Non-Working Day?'}
+            </Text>
+            
+            <Text style={styles.autoLinkMessage}>
+              {nonWorkingDayPending?.isRemoving
+                ? `Remove non-working day status from `
+                : `Mark `}
+              <Text style={styles.autoLinkActivityName}>{nonWorkingDayPending?.displayDate}</Text>
+              {nonWorkingDayPending?.isRemoving ? '?' : ' as a non-working day?'}
+            </Text>
+
+            <View style={styles.autoLinkButtonContainer}>
+              <TouchableOpacity
+                style={[styles.autoLinkButton, styles.autoLinkButtonNo]}
+                onPress={() => {
+                  console.log('🟢 [NonWorkingDay] User cancelled');
+                  setShowNonWorkingDayPrompt(false);
+                  setNonWorkingDayPending(null);
+                }}
+              >
+                <Text style={styles.autoLinkButtonTextNo}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.autoLinkButton,
+                  nonWorkingDayPending?.isRemoving
+                    ? { backgroundColor: '#FF6B6B' }
+                    : styles.autoLinkButtonYes
+                ]}
+                onPress={() => {
+                  if (nonWorkingDayPending) {
+                    if (nonWorkingDayPending.isRemoving) {
+                      console.log('🟢 [NonWorkingDay] Removing non-working day:', nonWorkingDayPending.dateString);
+                      const removeFunction = onRemoveNonWorkingDay || onRemoveHoliday;
+                      if (removeFunction) {
+                        const dayToRemove = (timechart.nonWorkingDays || []).find(d => {
+                          const dDate = new Date(d.date);
+                          return dDate.toISOString().split('T')[0] === nonWorkingDayPending.dateString;
+                        });
+                        if (dayToRemove && dayToRemove.id) {
+                          removeFunction(dayToRemove.id);
+                        }
+                      }
+                    } else {
+                      console.log('🟢 [NonWorkingDay] Adding non-working day:', nonWorkingDayPending.dateString);
+                      const addFunction = onAddNonWorkingDay || onAddHoliday;
+                      if (addFunction) {
+                        const currentDate = new Date(timechart.startDate);
+                        currentDate.setDate(currentDate.getDate() + nonWorkingDayPending.dayIndex);
+                        addFunction({
+                          id: `non-working-${Date.now()}`,
+                          date: currentDate,
+                          name: `Non-Working Day`,
+                        });
+                      }
+                    }
+                  }
+                  
+                  setShowNonWorkingDayPrompt(false);
+                  setNonWorkingDayPending(null);
+                }}
+              >
+                <Text style={styles.autoLinkButtonTextYes}>
+                  {nonWorkingDayPending?.isRemoving ? 'Yes, Remove' : 'Yes, Mark'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -4335,10 +4888,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   // Floor filter bar
-  floorFilterBar: {
+  floorFilterBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#F9F9F9',
     borderBottomWidth: 1,
     borderBottomColor: '#E0E0E0',
+  },
+  floorFilterBar: {
+    flex: 1,
     maxHeight: 48,
   },
   floorFilterBarContent: {
@@ -4347,6 +4905,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 8,
+  },
+  quickAddFloorButton: {
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0066CC',
+    borderLeftWidth: 1,
+    borderLeftColor: '#E0E0E0',
+  },
+  quickAddFloorButtonText: {
+    fontSize: 28,
+    color: '#FFF',
+    fontWeight: '300',
+    marginTop: -2,
   },
   floorFilterChip: {
     flexDirection: 'row',
@@ -4459,6 +5032,119 @@ const styles = StyleSheet.create({
   inlineAddActivityButtonText: {
     color: '#0066CC',
     fontSize: 13,
+    fontWeight: '700',
+  },
+  // Inline activity input row styles
+  inlineActivityInputRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    gap: 3,
+    alignItems: 'flex-start',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+    backgroundColor: '#FAFAFA',
+    marginLeft: 80,
+  },
+  inlineInputCell: {
+    padding: 2,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#DDD',
+    borderRadius: 3,
+    justifyContent: 'center',
+  },
+  inlineTextInput: {
+    fontSize: 11,
+    color: '#333',
+    padding: 2,
+    height: 24,
+  },
+  inlineDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    height: 24,
+    paddingHorizontal: 2,
+  },
+  inlineDropdownValue: {
+    fontSize: 10,
+    color: '#333',
+    fontWeight: '500',
+  },
+  inlineDropdownButton: {
+    paddingHorizontal: 2,
+  },
+  inlineDropdownButtonText: {
+    fontSize: 9,
+    color: '#0066CC',
+    fontWeight: '700',
+  },
+  inlineDurationStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 28,
+    paddingHorizontal: 2,
+    gap: 2,
+  },
+  inlineDurationBtn: {
+    width: 18,
+    height: 18,
+    backgroundColor: '#0066CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 2,
+  },
+  inlineDurationBtnText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  inlineDurationInput: {
+    width: 30,
+    height: 20,
+    borderWidth: 1,
+    borderColor: '#DDD',
+    borderRadius: 2,
+    paddingHorizontal: 2,
+    fontSize: 9,
+    color: '#0066CC',
+    textAlign: 'center',
+    backgroundColor: '#F0F8FF',
+  },
+  inlineActionButtons: {
+    flexDirection: 'row',
+    gap: 3,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 4,
+    height: 28,
+    alignItems: 'center',
+  },
+  inlineAddBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    backgroundColor: '#4CAF50',
+    borderRadius: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inlineAddBtnText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  inlineCancelBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    backgroundColor: '#F44336',
+    borderRadius: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inlineCancelBtnText: {
+    color: '#FFF',
+    fontSize: 11,
     fontWeight: '700',
   },
   inlineAddContractorRow: {
@@ -4691,5 +5377,78 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     color: '#1A3A5C',
     paddingLeft: 8,
+  },
+  // ── Auto-Linking Prompt Modal ───────────────────────────────────────────
+  autoLinkOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  autoLinkPromptCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 24,
+    marginHorizontal: 20,
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  autoLinkTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1A1A2E',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  autoLinkMessage: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  autoLinkActivityName: {
+    fontWeight: '700',
+    color: '#0066CC',
+  },
+  autoLinkDescription: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 24,
+    lineHeight: 18,
+    fontStyle: 'italic',
+  },
+  autoLinkButtonContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'flex-end',
+  },
+  autoLinkButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  autoLinkButtonNo: {
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1.5,
+    borderColor: '#DDD',
+  },
+  autoLinkButtonYes: {
+    backgroundColor: '#0066CC',
+  },
+  autoLinkButtonTextNo: {
+    color: '#666',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  autoLinkButtonTextYes: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

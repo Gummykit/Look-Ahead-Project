@@ -179,21 +179,22 @@ export default function EditorScreen() {
   const handleUpdateActivity = (id: string, updatedActivity: any) => {
     if (!timechart) return;
 
-    setTimechart(prevTimechart => {
-      if (!prevTimechart) return prevTimechart;
-      
-      // Find the original activity to compare dates
-      const originalActivity = prevTimechart.activities.find(a => a.id === id);
-      if (!originalActivity) return prevTimechart;
+    try {
+      setTimechart(prevTimechart => {
+        if (!prevTimechart) return prevTimechart;
+        
+        // Find the original activity to compare dates
+        const originalActivity = prevTimechart.activities.find(a => a.id === id);
+        if (!originalActivity) return prevTimechart;
 
-      console.log('🟢 [Update] Activity update received:', {
-        id: id,
-        originalStartDate: originalActivity.startDate,
-        newStartDate: updatedActivity.startDate,
-        isParent: !originalActivity.parentActivityId,
-        childActivityIds: originalActivity.childActivityIds,
-        hasChildUpdates: !!updatedActivity.childUpdates,
-      });
+        console.log('🟢 [Update] Activity update received:', {
+          id: id,
+          originalStartDate: originalActivity.startDate,
+          newStartDate: updatedActivity.startDate,
+          isParent: !originalActivity.parentActivityId,
+          childActivityIds: originalActivity.childActivityIds,
+          hasChildUpdates: !!updatedActivity.childUpdates,
+        });
 
       // Normalize dates for comparison (remove time component, use UTC)
       const normalizeDate = (date: Date | string) => {
@@ -202,16 +203,26 @@ export default function EditorScreen() {
       };
 
       // Check if the dates have changed (e.g., due to dragging)
-      const startDateChanged = updatedActivity.startDate && 
+      const startDateChanged = updatedActivity.startDate && updatedActivity.startDate !== undefined &&
         normalizeDate(updatedActivity.startDate) !== normalizeDate(originalActivity.startDate);
-      const endDateChanged = updatedActivity.endDate && 
+      const endDateChanged = updatedActivity.endDate && updatedActivity.endDate !== undefined &&
         normalizeDate(updatedActivity.endDate) !== normalizeDate(originalActivity.endDate);
+
+      // CRITICAL: Check if this is ONLY a parentActivityId change (for linking)
+      const isOnlyParentActivityIdChange = updatedActivity.parentActivityId !== undefined && 
+        !updatedActivity.startDate && 
+        !updatedActivity.endDate;
 
       console.log('🔵 [Update] Date changes detected:', {
         startDateChanged: startDateChanged,
         endDateChanged: endDateChanged,
-        oldStart: normalizeDate(originalActivity.startDate),
-        newStart: normalizeDate(updatedActivity.startDate),
+        hasStartDate: !!updatedActivity.startDate,
+        hasEndDate: !!updatedActivity.endDate,
+        isOnlyParentActivityIdChange: isOnlyParentActivityIdChange,
+        startDateValue: updatedActivity.startDate,
+        endDateValue: updatedActivity.endDate,
+        oldStart: updatedActivity.startDate ? normalizeDate(updatedActivity.startDate) : 'N/A',
+        newStart: updatedActivity.startDate ? normalizeDate(updatedActivity.startDate) : 'N/A',
       });
 
       // Helper function to recursively find all descendants (children, grandchildren, etc.)
@@ -242,8 +253,13 @@ export default function EditorScreen() {
 
       // If childUpdates are included, use them directly (they're already calculated in the component)
       // Otherwise, calculate child updates if this is a parent (for non-drag updates)
+      // CRITICAL: Do NOT calculate child updates if this is only a parentActivityId change (linking)
       let childUpdates: any[] = [];
-      if (updatedActivity.childUpdates) {
+      if (isOnlyParentActivityIdChange) {
+        // Skip all child update calculations for linking operations
+        console.log('🟢 [Update] Skipping child updates - this is a linking operation only');
+        childUpdates = [];
+      } else if (updatedActivity.childUpdates) {
         // Use the child updates passed from the drag handler
         childUpdates = updatedActivity.childUpdates;
         console.log('🟢 [Update] Using passed childUpdates:', childUpdates.length, 'children');
@@ -376,25 +392,45 @@ export default function EditorScreen() {
       // Create the updated activity object (without childUpdates property)
       const { childUpdates: _, ...activityToUpdate } = updatedActivity;
 
-      console.log('🔵 [Update] activityToUpdate object:', activityToUpdate);
+      console.log('🔵 [Update] updatedActivity (BEFORE destructuring):', JSON.stringify(updatedActivity));
+      console.log('🔵 [Update] activityToUpdate object (AFTER destructuring):', JSON.stringify(activityToUpdate));
       console.log('🔵 [Update] Does it have parentActivityId?', 'parentActivityId' in activityToUpdate, activityToUpdate.parentActivityId);
 
       // CRITICAL FIX: Build activities array in a single pass
       let updatedActivities = prevTimechart.activities.map(a => {
         if (a.id === id) {
-          const updated = { ...a, ...activityToUpdate };
+          // Ensure dates are strings, not Date objects
+          const normalizedActivityToUpdate = { ...activityToUpdate };
+          if (normalizedActivityToUpdate.startDate && typeof normalizedActivityToUpdate.startDate === 'object') {
+            normalizedActivityToUpdate.startDate = normalizedActivityToUpdate.startDate.toISOString().split('T')[0];
+          }
+          if (normalizedActivityToUpdate.endDate && typeof normalizedActivityToUpdate.endDate === 'object') {
+            normalizedActivityToUpdate.endDate = normalizedActivityToUpdate.endDate.toISOString().split('T')[0];
+          }
+          
+          const updated = { ...a, ...normalizedActivityToUpdate };
           console.log('🟢 [Update] Activity map - parent updated:', {
             id: id,
             oldStart: a.startDate,
             newStart: updated.startDate,
             parentActivityId: updated.parentActivityId,
+            hasParentActivityId: !!updated.parentActivityId,
           });
           return updated;
         }
         // Also apply child updates if any
         const childUpdate = childUpdates.find((cu: any) => cu.childId === a.id);
         if (childUpdate) {
-          const updated = { ...a, ...childUpdate.updates };
+          // Ensure child dates are also strings
+          const normalizedChildUpdates = { ...childUpdate.updates };
+          if (typeof normalizedChildUpdates.startDate === 'object') {
+            normalizedChildUpdates.startDate = normalizedChildUpdates.startDate.toISOString().split('T')[0];
+          }
+          if (typeof normalizedChildUpdates.endDate === 'object') {
+            normalizedChildUpdates.endDate = normalizedChildUpdates.endDate.toISOString().split('T')[0];
+          }
+          
+          const updated = { ...a, ...normalizedChildUpdates };
           console.log('🟢 [Update] Activity map - child updated:', {
             id: a.id,
             name: a.name,
@@ -435,7 +471,7 @@ export default function EditorScreen() {
 
       // If dates changed, migrate daily activity logs to new dates
       let dailyActivityLogs = prevTimechart.dailyActivityLogs;
-      if ((startDateChanged || endDateChanged) && prevTimechart.dailyActivityLogs.length > 0) {
+      if ((startDateChanged || endDateChanged) && updatedActivity.startDate && updatedActivity.endDate && prevTimechart.dailyActivityLogs.length > 0) {
         // Calculate the date offset (how many days the activity was moved)
         const oldStart = new Date(originalActivity.startDate);
         const newStart = new Date(updatedActivity.startDate);
@@ -480,12 +516,23 @@ export default function EditorScreen() {
       }
 
       console.log('🟢 [Update] Calling setTimechart with updated activities');
+      
+      // Ensure all dates in updatedActivities are Date objects, not strings
+      const activitiesWithDateObjects = updatedActivities.map(a => ({
+        ...a,
+        startDate: typeof a.startDate === 'string' ? new Date(a.startDate) : a.startDate,
+        endDate: typeof a.endDate === 'string' ? new Date(a.endDate) : a.endDate,
+      }));
+
       return {
         ...prevTimechart,
-        activities: updatedActivities,
+        activities: activitiesWithDateObjects,
         dailyActivityLogs: dailyActivityLogs,
       } as TimeChartData;
-    });
+      });
+    } catch (error) {
+      console.error('🔴 [Update] Error in handleUpdateActivity:', error);
+    }
   };
 
   const handleRemoveActivity = (id: string) => {
