@@ -155,7 +155,23 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
   // React batching doesn't cause intermediate updaters to overwrite each other.
   const handleAddActivities = (activities: any[]) => {
     if (!timechart) return;
-    console.log('🔵 [EditorScreen] handleAddActivities called with:', activities.length, 'activities');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('➕ [ADD-ACTIVITIES] handleAddActivities called');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('➕ [ADD-ACTIVITIES] Received:', activities.length, 'activities');
+    
+    activities.forEach((a, idx) => {
+      console.log(`➕ [ADD-ACTIVITIES] Activity ${idx}:`, {
+        id: a.id,
+        name: a.name,
+        startDate: a.startDate,
+        endDate: a.endDate,
+        duration: a.duration,
+        parentActivityId: a.parentActivityId,
+        childActivityIds: a.childActivityIds,
+      });
+    });
+    
     setTimechart(prev => {
       if (!prev) return prev;
       const existingIds = new Set(prev.activities.map(a => a.id));
@@ -167,11 +183,28 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
           sequenceOrder: prev.activities.length + 1 + i,
           childActivityIds: a.childActivityIds ?? [],
         }));
-      console.log('🔵 [EditorScreen] After filtering, adding:', toAdd.length, 'activities');
-      console.log('🔵 [EditorScreen] Activities to add:', toAdd.map(a => ({ id: a.id, name: a.name, parentId: a.parentActivityId, childIds: a.childActivityIds })));
-      if (toAdd.length === 0) return prev;
+      console.log('➕ [ADD-ACTIVITIES] After filtering, adding:', toAdd.length, 'activities');
+      toAdd.forEach((a) => {
+        console.log(`➕ [ADD-ACTIVITIES] Will add:`, {
+          id: a.id,
+          name: a.name,
+          startDate: a.startDate,
+          endDate: a.endDate,
+          duration: a.duration,
+          parentActivityId: a.parentActivityId,
+          childActivityIds: a.childActivityIds,
+        });
+      });
+      
+      if (toAdd.length === 0) {
+        console.log('➕ [ADD-ACTIVITIES] No activities to add (all filtered)');
+        return prev;
+      }
+      
       const newState = { ...prev, activities: [...prev.activities, ...toAdd] };
-      console.log('🔵 [EditorScreen] New total activities:', newState.activities.length);
+      console.log('═══════════════════════════════════════════════════════════════');
+      console.log('✅ [ADD-ACTIVITIES] New total activities:', newState.activities.length);
+      console.log('═══════════════════════════════════════════════════════════════');
       return newState;
     });
   };
@@ -258,18 +291,74 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
 
   // Batch update multiple activities in a single state update to avoid stale closure issues
   const handleBatchUpdateActivities = (updates: Array<{ id: string; changes: any }>) => {
-    if (!timechart) return;
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('📋 [BATCH-UPDATE] handleBatchUpdateActivities OUTER called');
+    console.log('📋 [BATCH-UPDATE-OUTER] Updates count:', updates.length);
+    console.log('═══════════════════════════════════════════════════════════════');
+    
+    updates.forEach((update, idx) => {
+      console.log(`📋 [BATCH-UPDATE-OUTER] Update ${idx}: id=${update.id}, changes=${JSON.stringify(update.changes)}`);
+    });
+    
     const updateMap = new Map(updates.map(u => [u.id, u.changes]));
+    
+    console.log('📋 [BATCH-UPDATE-OUTER] About to call setTimechart');
+    
     setTimechart(prev => {
-      if (!prev) return prev;
+      console.log('📋 [BATCH-UPDATE-INNER] ✅ UPDATER FUNCTION EXECUTING');
+      console.log('📋 [BATCH-UPDATE-INNER] prev exists?', !!prev);
+      if (!prev) {
+        console.log('🔴 [BATCH-UPDATE-INNER] Previous state is null');
+        return prev;
+      }
+      
+      console.log('📋 [BATCH-UPDATE-INNER] Activities before update:', prev.activities.length);
+      
+      // Log BEFORE state
+      updates.forEach((update) => {
+        const activityBefore = prev.activities.find(a => a.id === update.id);
+        console.log(`� [BATCH-UPDATE-BEFORE] "${activityBefore?.name}":`, {
+          startDate: activityBefore?.startDate,
+          endDate: activityBefore?.endDate,
+          duration: activityBefore?.duration,
+          childActivityIds: activityBefore?.childActivityIds,
+        });
+      });
+      
+      const newActivities = prev.activities.map(a => {
+        const changes = updateMap.get(a.id);
+        if (changes) {
+          const updatedActivity = { ...a, ...changes };
+          console.log(`📋 [BATCH-UPDATE-APPLYING] "${a.name}":`, {
+            beforeChildIds: a.childActivityIds,
+            afterChildIds: updatedActivity.childActivityIds,
+            changesApplied: changes,
+          });
+          return updatedActivity;
+        }
+        return a;
+      });
+      
+      // Log AFTER state
+      updates.forEach(update => {
+        const parentActivityAfter = newActivities.find(a => a.id === update.id);
+        console.log(`✅ [BATCH-UPDATE-AFTER] "${parentActivityAfter?.name}":`, {
+          startDate: parentActivityAfter?.startDate,
+          endDate: parentActivityAfter?.endDate,
+          duration: parentActivityAfter?.duration,
+          childActivityIds: parentActivityAfter?.childActivityIds,
+        });
+      });
+      
+      console.log('📋 [BATCH-UPDATE-INNER] ✅ Returning new state with', newActivities.length, 'activities');
+      
       return {
         ...prev,
-        activities: prev.activities.map(a => {
-          const changes = updateMap.get(a.id);
-          return changes ? { ...a, ...changes } : a;
-        }),
+        activities: newActivities,
       };
     });
+    
+    console.log('📋 [BATCH-UPDATE-OUTER] setTimechart call initiated');
   };
 
   const handleRemoveActivity = (id: string) => {

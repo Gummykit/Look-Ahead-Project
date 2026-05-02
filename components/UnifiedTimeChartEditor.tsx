@@ -680,6 +680,37 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     setInlineActivityFloor(nextFloor);
   };
 
+  // Handle opening link modal for inline newly added activity
+  const handleInlineActivityLinking = () => {
+    if (!inlineActivityName.trim()) {
+      Alert.alert('Error', 'Please enter activity name first');
+      return;
+    }
+
+    // Generate a temporary ID for the inline activity
+    const tempActivityId = `temp-inline-${Date.now()}`;
+    
+    // Set this as the linking source
+    setLinkingSourceActivityId(tempActivityId);
+    
+    // Store inline activity info for later reference
+    setActivityName(inlineActivityName);
+    setActivityDuration(String(inlineActivityDuration));
+    setStartActivityDate(new Date(timechart.startDate).toISOString().split('T')[0]);
+    setSelectedFloorLevel(inlineActivityFloor);
+    setSelectedSubcontractorIds(inlineActivityContractor ? [inlineActivityContractor] : []);
+    setEditingActivityId(null);
+    
+    // Reset linking modal state
+    setSelectedLinkTargetActivityId(null);
+    setLinkOffsetDays(0);
+    setLinkUseCustomOffset(false);
+    setLinkCustomOffset('');
+    
+    // Open linking modal
+    setShowLinkActivityModal(true);
+  };
+
   const handleAddActivity = () => {
     // Check if user has permission to add activities
     if (user && !canPerformAction(user.role, 'canAddActivity')) {
@@ -1088,6 +1119,10 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
+    // Check if this is coming from the inline linking workflow
+    const isInlineFlow = linkingSourceActivityId.startsWith('temp-inline-');
+    console.log('🔵 [LINK-HANDLER] Inline flow detected:', isInlineFlow);
+
     const sourceActivity = timechart.activities.find(a => a.id === linkingSourceActivityId);
     const targetActivity = timechart.activities.find(a => a.id === selectedLinkTargetActivityId);
 
@@ -1102,7 +1137,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       targetParentId: targetActivity?.parentActivityId,
     });
 
-    if (!sourceActivity) {
+    // For inline flow, source won't exist yet in timechart, so we skip the check
+    if (!isInlineFlow && !sourceActivity) {
       console.log('🔴 [LINK-HANDLER] ❌ Source activity not found in timechart');
       Alert.alert('Error', 'Source activity not found');
       return;
@@ -1114,27 +1150,23 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       return;
     }
 
-    console.log('✅ [LINK-HANDLER] Both activities found, proceeding with linking...');
+    console.log('✅ [LINK-HANDLER] Target activity found, proceeding with linking...');
 
     const offsetVal = linkUseCustomOffset ? (parseInt(linkCustomOffset) || 0) : linkOffsetDays;
     console.log('🔵 [LINK-HANDLER] Offset value:', offsetVal);
 
     // If we're in edit mode (editingActivityId is set), use the form values for source duration
     // Otherwise, use the saved activity duration
-    let sourceDurationDays = getDaysBetween(sourceActivity.startDate, sourceActivity.endDate);
-    if (editingActivityId === linkingSourceActivityId) {
-      // Use form values for calculating duration
-      const [startYear, startMonth, startDay] = startActivityDate.split('-').map(Number);
-      const formStart = new Date(startYear, startMonth - 1, startDay);
-      formStart.setHours(0, 0, 0, 0);
-      const durationDays = parseInt(activityDuration) || 1;
-      sourceDurationDays = durationDays;
-      console.log('� [LINK-HANDLER] In edit mode - using form duration:', {
-        formStart: formStart.toISOString(),
-        duration: sourceDurationDays,
-      });
-    } else {
-      console.log('🟡 [LINK-HANDLER] Not in edit mode - using saved duration:', sourceDurationDays);
+    let sourceDurationDays = parseInt(activityDuration) || 1;
+    
+    if (!isInlineFlow && sourceActivity) {
+      // For non-inline flow, get duration from saved activity
+      sourceDurationDays = getDaysBetween(sourceActivity.startDate, sourceActivity.endDate);
+      console.log('🟡 [LINK-HANDLER] Not in inline mode - using saved duration:', sourceDurationDays);
+    } else if (isInlineFlow) {
+      // For inline flow, use the form values
+      sourceDurationDays = parseInt(activityDuration) || 1;
+      console.log('� [LINK-HANDLER] In inline mode - using form duration:', sourceDurationDays);
     }
 
     // Calculate new dates for the source activity based on offset from target's end date
@@ -1159,81 +1191,201 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       newSourceEndDate: newSourceEndDate.toISOString(),
     });
 
-    // Update the source activity to have the target as parent AND new dates based on offset
-    // IMPORTANT: Include startDate and endDate to prevent "Invalid Date" errors in parent handler
-    const sourceUpdates: any = {
-      parentActivityId: targetActivity.id,
-      startDate: newSourceStartDate,
-      endDate: newSourceEndDate,
-      duration: sourceDurationDays,
-    };
+    // For inline flow, we need to create the activity first, then link it
+    if (isInlineFlow) {
+      console.log('🟢 [LINK-HANDLER] Processing inline flow - creating activity and linking...');
+      
+      const genId = () => Math.random().toString(36).substr(2, 9);
+      const newActivityId = genId();
+      
+      const floorLevel = (timechart.floorLevels || []).find(f => f.id === selectedFloorLevel);
+      const contractor = timechart.subcontractors.find(s => s.id === (selectedSubcontractorIds[0] || inlineActivityContractor));
+      
+      const formatDate = (date: Date) => {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      };
+      
+      // Create the new activity with linking info
+      const newActivity = {
+        id: newActivityId,
+        name: activityName.trim(),
+        startDate: formatDate(newSourceStartDate),
+        endDate: formatDate(newSourceEndDate),
+        duration: sourceDurationDays,
+        subcontractorId: contractor?.id || '',
+        subcontractorName: contractor?.name || 'Unassigned',
+        subcontractorIds: [contractor?.id || ''],
+        subcontractorNames: [contractor?.name || 'Unassigned'],
+        floorLevelId: selectedFloorLevel || '',
+        floorLevelName: floorLevel?.name || 'Ground',
+        floorLevelColor: floorLevel?.color || '#FF6B6B',
+        parentActivityId: targetActivity.id,
+        childActivityIds: [],
+      };
+      
+      // Update target to include this new activity in childActivityIds
+      const updatedChildIds = targetActivity.childActivityIds ? [...targetActivity.childActivityIds] : [];
+      if (!updatedChildIds.includes(newActivityId)) {
+        updatedChildIds.push(newActivityId);
+      }
 
-    // Update the target activity to include source in childActivityIds
-    const updatedChildIds = targetActivity.childActivityIds ? [...targetActivity.childActivityIds] : [];
-    if (!updatedChildIds.includes(sourceActivity.id)) {
-      updatedChildIds.push(sourceActivity.id);
-    }
-
-    console.log('🟢 [LINK-HANDLER] Prepared updates:', {
-      sourceActivityId: linkingSourceActivityId,
-      sourceUpdates,
-      targetActivityId: selectedLinkTargetActivityId,
-      targetChildIds: updatedChildIds,
-    });
-
-    try {
-      // CRITICAL FIX: Use batch update to apply BOTH updates in a single state change
-      // This prevents the second update from overwriting the first
-      if (onBatchUpdateActivities) {
-        console.log('🟢 [LINK-HANDLER] ➡️ Using batch update for SOURCE and TARGET activities...');
-        onBatchUpdateActivities([
-          {
-            id: linkingSourceActivityId,
-            changes: sourceUpdates,
-          },
-          {
+      console.log('🟢 [LINK-HANDLER] Inline flow - adding new activity:', {
+        newActivityId,
+        newActivityName: newActivity.name,
+        parentId: selectedLinkTargetActivityId,
+        updatedChildIds,
+      });
+      
+      // Add the new activity AND update parent in single call
+      if (onAddActivities) {
+        console.log('🟢 [LINK-HANDLER] Calling onAddActivities with new linked activity');
+        onAddActivities([newActivity]);
+      }
+      
+      // Update parent to include new child - do this AFTER adding activity
+      // This ensures the activity is in the timechart before we link it
+      setTimeout(() => {
+        console.log('🟢 [LINK-HANDLER] Inside setTimeout - updating parent and resetting state');
+        
+        // Get the current parent activity to log its original state
+        const parentActivityBeforeUpdate = timechart.activities.find(a => a.id === selectedLinkTargetActivityId);
+        console.log('🔍 [LINK-HANDLER] Parent activity BEFORE update:', {
+          id: parentActivityBeforeUpdate?.id,
+          name: parentActivityBeforeUpdate?.name,
+          startDate: parentActivityBeforeUpdate?.startDate,
+          endDate: parentActivityBeforeUpdate?.endDate,
+          duration: parentActivityBeforeUpdate?.duration,
+          childActivityIds: parentActivityBeforeUpdate?.childActivityIds,
+        });
+        
+        if (onBatchUpdateActivities) {
+          console.log('🟢 [LINK-HANDLER] Updating parent activity with new child ID');
+          console.log('� [LINK-HANDLER] onBatchUpdateActivities exists?', !!onBatchUpdateActivities);
+          console.log('🟢 [LINK-HANDLER] onBatchUpdateActivities type:', typeof onBatchUpdateActivities);
+          console.log('�📊 [LINK-HANDLER] Update object being sent:', {
             id: selectedLinkTargetActivityId,
             changes: {
               childActivityIds: updatedChildIds,
-              startDate: targetActivity.startDate,
-              endDate: targetActivity.endDate,
             },
-          },
-        ]);
-        console.log('✅ [LINK-HANDLER] Batch update completed for SOURCE and TARGET activities');
-      } else {
-        // Fallback to separate updates if batch not available
-        console.log('🟡 [LINK-HANDLER] Batch update not available, using separate updates...');
-        onUpdateActivity(linkingSourceActivityId, sourceUpdates);
-        console.log('✅ [LINK-HANDLER] Source activity update callback completed');
-        onUpdateActivity(selectedLinkTargetActivityId, {
-          childActivityIds: updatedChildIds,
-          startDate: targetActivity.startDate,
-          endDate: targetActivity.endDate,
-        });
-        console.log('✅ [LINK-HANDLER] Target activity update callback completed');
+          });
+          const updatePayload = [{
+            id: selectedLinkTargetActivityId,
+            changes: {
+              childActivityIds: updatedChildIds,
+            },
+          }];
+          console.log('🟢 [LINK-HANDLER] About to call onBatchUpdateActivities with:', updatePayload);
+          onBatchUpdateActivities(updatePayload);
+          console.log('✅ [LINK-HANDLER] onBatchUpdateActivities callback completed');
+        } else if (onUpdateActivity) {
+          console.log('🟢 [LINK-HANDLER] Fallback: updating parent with onUpdateActivity');
+          onUpdateActivity(selectedLinkTargetActivityId, {
+            childActivityIds: updatedChildIds,
+          });
+        }
+        
+        // Reset linking state AFTER parent update
+        console.log('🔵 [LINK-HANDLER] Resetting all state...');
+        setShowLinkActivityModal(false);
+        setLinkingSourceActivityId(null);
+        setSelectedLinkTargetActivityId(null);
+        setLinkOffsetDays(0);
+        setLinkUseCustomOffset(false);
+        setLinkCustomOffset('');
+        
+        // Reset inline form state
+        console.log('🔵 [LINK-HANDLER] Resetting inline form state...');
+        setShowInlineNewActivity(false);
+        setInlineActivityName('');
+        setInlineActivityDuration(7);
+        setActivityName('');
+        setActivityDuration('0');
+        setStartActivityDate(new Date(timechart.startDate).toISOString().split('T')[0]);
+        setSelectedFloorLevel((timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null);
+        setSelectedSubcontractorIds([]);
+        
+        console.log('═══════════════════════════════════════════════════════════════');
+        console.log('✅ [LINK-HANDLER-COMPLETE] Linking process finished successfully');
+        console.log('═══════════════════════════════════════════════════════════════');
+        Alert.alert('Success', 'Activity created and linked successfully!');
+      }, 100);
+    } else {
+      // Regular linking flow for existing activities
+      console.log('🟢 [LINK-HANDLER] Processing regular linking flow...');
+      
+      // Update the source activity to have the target as parent AND new dates based on offset
+      const sourceUpdates: any = {
+        parentActivityId: targetActivity.id,
+        startDate: newSourceStartDate,
+        endDate: newSourceEndDate,
+        duration: sourceDurationDays,
+      };
+
+      // Update the target activity to include source in childActivityIds
+      const updatedChildIds = targetActivity.childActivityIds ? [...targetActivity.childActivityIds] : [];
+      if (sourceActivity && !updatedChildIds.includes(sourceActivity.id)) {
+        updatedChildIds.push(sourceActivity.id);
       }
 
-      console.log('✅ [LINK-HANDLER] Both updates called successfully');
-    } catch (error) {
-      console.log('🔴 [LINK-HANDLER] Error during update:', error);
-      Alert.alert('Error', 'Failed to link activities');
-      return;
+      console.log('🟢 [LINK-HANDLER] Prepared updates:', {
+        sourceActivityId: linkingSourceActivityId,
+        sourceUpdates,
+        targetActivityId: selectedLinkTargetActivityId,
+        targetChildIds: updatedChildIds,
+      });
+
+      try {
+        // CRITICAL FIX: Use batch update to apply BOTH updates in a single state change
+        if (onBatchUpdateActivities) {
+          console.log('🟢 [LINK-HANDLER] ➡️ Using batch update for SOURCE and TARGET activities...');
+          onBatchUpdateActivities([
+            {
+              id: linkingSourceActivityId,
+              changes: sourceUpdates,
+            },
+            {
+              id: selectedLinkTargetActivityId,
+              changes: {
+                childActivityIds: updatedChildIds,
+              },
+            },
+          ]);
+          console.log('✅ [LINK-HANDLER] Batch update completed for SOURCE and TARGET activities');
+        } else {
+          // Fallback to separate updates if batch not available
+          console.log('🟡 [LINK-HANDLER] Batch update not available, using separate updates...');
+          onUpdateActivity(linkingSourceActivityId, sourceUpdates);
+          console.log('✅ [LINK-HANDLER] Source activity update callback completed');
+          onUpdateActivity(selectedLinkTargetActivityId, {
+            childActivityIds: updatedChildIds,
+          });
+          console.log('✅ [LINK-HANDLER] Target activity update callback completed');
+        }
+
+        console.log('✅ [LINK-HANDLER] Both updates called successfully');
+      } catch (error) {
+        console.log('🔴 [LINK-HANDLER] Error during update:', error);
+        Alert.alert('Error', 'Failed to link activities');
+        return;
+      }
+
+      // Reset linking state - for regular flow, do it immediately
+      console.log('🔵 [LINK-HANDLER] Resetting all state...');
+      setShowLinkActivityModal(false);
+      setLinkingSourceActivityId(null);
+      setSelectedLinkTargetActivityId(null);
+      setLinkOffsetDays(0);
+      setLinkUseCustomOffset(false);
+      setLinkCustomOffset('');
+
+      console.log('═══════════════════════════════════════════════════════════════');
+      console.log('✅ [LINK-HANDLER-COMPLETE] Linking process finished successfully');
+      console.log('═══════════════════════════════════════════════════════════════');
+      Alert.alert('Success', 'Activity linked successfully!');
     }
-
-    // Reset linking state
-    console.log('� [LINK-HANDLER] Resetting linking state...');
-    setShowLinkActivityModal(false);
-    setLinkingSourceActivityId(null);
-    setSelectedLinkTargetActivityId(null);
-    setLinkOffsetDays(0);
-    setLinkUseCustomOffset(false);
-    setLinkCustomOffset('');
-
-    console.log('═══════════════════════════════════════════════════════════════');
-    console.log('✅ [LINK-HANDLER-COMPLETE] Linking process finished successfully');
-    console.log('═══════════════════════════════════════════════════════════════');
-    Alert.alert('Success', 'Activities linked successfully!');
   };
 
   const handleAddContractor = () => {
@@ -2372,7 +2524,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               </View>
 
               <View style={styles.chartArea}>
-                {renderDateCells(activities, activityStartDay)}
+                {renderDateCells([primaryActivity], activityStartDay)}
               </View>
             </View>
           </View>
@@ -2740,6 +2892,14 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                         </TouchableOpacity>
                       </View>
                     </View>
+
+                    {/* Linking Icon Button - To right of duration column */}
+                    <TouchableOpacity
+                      style={styles.inlineLinkingButton}
+                      onPress={handleInlineActivityLinking}
+                    >
+                      <Text style={styles.inlineLinkingButtonText}>🔗</Text>
+                    </TouchableOpacity>
 
                     {/* Action Buttons */}
                     <View style={styles.inlineActionButtons}>
@@ -5145,6 +5305,21 @@ const styles = StyleSheet.create({
   inlineCancelBtnText: {
     color: '#FFF',
     fontSize: 11,
+    fontWeight: '700',
+  },
+  inlineLinkingButton: {
+    width: 36,
+    height: 28,
+    backgroundColor: '#E3F2FD',
+    borderRadius: 3,
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 4,
+  },
+  inlineLinkingButtonText: {
+    fontSize: 16,
     fontWeight: '700',
   },
   inlineAddContractorRow: {
