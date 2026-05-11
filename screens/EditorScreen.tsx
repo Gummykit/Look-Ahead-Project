@@ -61,27 +61,56 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
   const handleAddHoliday = (holiday: any) => {
     if (!timechart) return;
     const nonWorkingDays = timechart.nonWorkingDays || [];
-    const exists = nonWorkingDays.some(
-      h => new Date(h.date).toDateString() === new Date(holiday.date).toDateString()
-    );
-    if (exists) {
-      Alert.alert('Error', 'Non-working day already exists on this date');
-      return;
+    
+    // Special handling for Sunday Overrides: allow adding/replacing
+    const isSundayOverride = holiday.name?.includes('Sunday Override');
+    
+    if (!isSundayOverride) {
+      // For regular non-working days, check for duplicates
+      const exists = nonWorkingDays.some(
+        h => new Date(h.date).toDateString() === new Date(holiday.date).toDateString()
+      );
+      if (exists) {
+        Alert.alert('Error', 'Non-working day already exists on this date');
+        return;
+      }
     }
+    
+    // For Sunday Overrides, remove any existing override on that date first, then add the new one
+    let updatedNonWorkingDays = nonWorkingDays;
+    if (isSundayOverride) {
+      updatedNonWorkingDays = nonWorkingDays.filter(d => {
+        const dDate = new Date(d.date).toDateString();
+        const holidayDate = new Date(holiday.date).toDateString();
+        return !(dDate === holidayDate && d.name?.includes('Sunday Override'));
+      });
+    }
+    
     setTimechart({
       ...timechart,
       nonWorkingDays: [
-        ...nonWorkingDays,
-        { ...holiday, id: Math.random().toString(36).substr(2, 9) }
+        ...updatedNonWorkingDays,
+        { ...holiday, id: holiday.id || Math.random().toString(36).substr(2, 9) }
       ],
     });
   };
 
   const handleRemoveHoliday = (id: string) => {
     if (!timechart) return;
+    console.log('🗑️ [REMOVE-HOLIDAY] handleRemoveHoliday called with id:', id);
+    console.log('🗑️ [REMOVE-HOLIDAY] Current nonWorkingDays before removal:', timechart.nonWorkingDays);
+    
+    const filtered = (timechart.nonWorkingDays || []).filter(h => {
+      const willRemove = h.id === id;
+      console.log(`🗑️ [REMOVE-HOLIDAY] Checking entry id="${h.id}", name="${h.name}" - removing? ${willRemove}`);
+      return !willRemove;
+    });
+    
+    console.log('🗑️ [REMOVE-HOLIDAY] After filtering, nonWorkingDays count:', filtered.length);
+    
     setTimechart({
       ...timechart,
-      nonWorkingDays: (timechart.nonWorkingDays || []).filter(h => h.id !== id),
+      nonWorkingDays: filtered,
     });
   };
 
@@ -105,12 +134,12 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ navigation, route })
     });
   };
 
-  const handleUpdateSubcontractor = (id: string, name: string) => {
+  const handleUpdateSubcontractor = (id: string, name: string, email?: string, phoneNumber?: string) => {
     if (!timechart) return;
     setTimechart({
       ...timechart,
       subcontractors: timechart.subcontractors.map(s =>
-        s.id === id ? { ...s, name } : s
+        s.id === id ? { ...s, name, ...(email !== undefined && { email }), ...(phoneNumber !== undefined && { phoneNumber }) } : s
       ),
     });
   };

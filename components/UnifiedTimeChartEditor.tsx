@@ -356,7 +356,7 @@ interface UnifiedTimeChartEditorProps {
   onRemoveNonWorkingDay?: (id: string) => void;
   onAddSubcontractor: (name: string) => void;
   onRemoveSubcontractor: (id: string) => void;
-  onUpdateSubcontractor: (id: string, name: string) => void;
+  onUpdateSubcontractor: (id: string, name: string, email?: string, phoneNumber?: string) => void;
   onAddActivity: (activity: any) => void;
   /** Batch-add multiple activities in a single state update (used for parent + linked activities). */
   onAddActivities?: (activities: any[]) => void;
@@ -426,6 +426,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     dateString: string;
     displayDate: string;
     isRemoving: boolean;
+    isSunday?: boolean;
+    isSundayOverride?: boolean;
   } | null>(null);
 
   const [holidayName, setHolidayName] = useState('');
@@ -549,6 +551,17 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
   const [inlineActivityFloor, setInlineActivityFloor] = useState<string | null>(
     (timechart.floorLevels && timechart.floorLevels.length > 0) ? timechart.floorLevels[0].id : null
   );
+  
+  // Duration editor modal state
+  const [showDurationModal, setShowDurationModal] = useState(false);
+  const [selectedActivityForDuration, setSelectedActivityForDuration] = useState<Activity | null>(null);
+  const [tempDuration, setTempDuration] = useState(1);
+  
+  // Contact info input modal state
+  const [showContactInputModal, setShowContactInputModal] = useState(false);
+  const [contactInputType, setContactInputType] = useState<'email' | 'phone' | null>(null);
+  const [contactInputValue, setContactInputValue] = useState('');
+  const [selectedContractorForContact, setSelectedContractorForContact] = useState<any>(null);
   
   // Reset inline form state when user clicks "+ Add Activity"
   useEffect(() => {
@@ -1934,6 +1947,58 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     }
   };
 
+  const handleOpenDurationEditor = (activity: Activity) => {
+    setSelectedActivityForDuration(activity);
+    setTempDuration(activity.duration || 1);
+    setShowDurationModal(true);
+  };
+
+  const handleSaveDuration = () => {
+    if (!selectedActivityForDuration || tempDuration < 1) return;
+    
+    const startDate = new Date(selectedActivityForDuration.startDate);
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + tempDuration - 1);
+    
+    onUpdateActivity(selectedActivityForDuration.id, {
+      ...selectedActivityForDuration,
+      duration: tempDuration,
+      endDate: endDate.toISOString().split('T')[0],
+    });
+    
+    setShowDurationModal(false);
+    setSelectedActivityForDuration(null);
+    setTempDuration(1);
+  };
+
+  const handleSaveContactInfo = () => {
+    if (!selectedContractorForContact || !contactInputValue.trim()) {
+      Alert.alert('Error', 'Please enter a valid value');
+      return;
+    }
+
+    if (contactInputType === 'email') {
+      onUpdateSubcontractor(
+        selectedContractorForContact.id,
+        selectedContractorForContact.name,
+        contactInputValue.trim(),
+        selectedContractorForContact.phoneNumber
+      );
+    } else if (contactInputType === 'phone') {
+      onUpdateSubcontractor(
+        selectedContractorForContact.id,
+        selectedContractorForContact.name,
+        selectedContractorForContact.email,
+        contactInputValue.trim()
+      );
+    }
+
+    setShowContactInputModal(false);
+    setContactInputType(null);
+    setContactInputValue('');
+    setSelectedContractorForContact(null);
+  };
+
   // Quick add floor with random color
   const handleQuickAddFloor = () => {
     const FLOOR_LEVEL_COLORS = [
@@ -2009,16 +2074,49 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
     currentDate.setDate(currentDate.getDate() + dayIndex);
     
     const dateString = currentDate.toISOString().split('T')[0];
-    const isAlreadyNonWorking = isNonWorkingDay(currentDate, timechart.nonWorkingDays || []);
+    const isSunday = currentDate.getDay() === 0;
+    
+    // Check if there's a Sunday Override entry (working day) for this Sunday
+    const isSundayOverride = isSunday && (timechart.nonWorkingDays || []).some(d => 
+      new Date(d.date).toDateString() === currentDate.toDateString() && d.name?.includes('Sunday Override')
+    );
+    
+    // Check if there's a regular non-working day entry for this date
+    const isExplicitlyMarkedNonWorking = (timechart.nonWorkingDays || []).some(d => 
+      new Date(d.date).toDateString() === currentDate.toDateString() && !d.name?.includes('Sunday Override')
+    );
+    
+    // Determine what action to take:
+    // - For regular non-working days: remove them
+    // - For Sundays with override (working): remove the override to make them non-working again
+    // - For regular Sundays (default non-working): add override to make them working
+    let isRemoving = false;
+    if (isExplicitlyMarkedNonWorking) {
+      isRemoving = true; // Remove explicit non-working day
+    } else if (isSundayOverride) {
+      isRemoving = true; // Remove Sunday Override to revert to default non-working
+    } else if (isSunday) {
+      isRemoving = false; // Add Sunday Override to make it working
+    }
+    
     const displayDate = currentDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     
-    console.log('🟢 [NonWorkingDay] Day header clicked:', { dayIndex, dateString, isAlreadyNonWorking });
+    console.log('🟢 [NonWorkingDay] Day header clicked:', { 
+      dayIndex, 
+      dateString, 
+      isSunday, 
+      isSundayOverride,
+      isExplicitlyMarkedNonWorking,
+      isRemoving 
+    });
     
     setNonWorkingDayPending({
       dayIndex,
       dateString,
       displayDate,
-      isRemoving: isAlreadyNonWorking,
+      isRemoving,
+      isSunday,
+      isSundayOverride,
     });
     setShowNonWorkingDayPrompt(true);
   };
@@ -2031,12 +2129,17 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       currentDate.setDate(currentDate.getDate() + i);
 
       const isHoliday = isNonWorkingDay(currentDate, timechart.nonWorkingDays || timechart.publicHolidays || []);
-      const isWeekend = currentDate.getDay() === 0; // Only Sunday is weekend
+      // Check if this is a Sunday that hasn't been explicitly removed from non-working days
+      const isSunday = currentDate.getDay() === 0;
+      const isSundayRemoved = isSunday && (timechart.nonWorkingDays || []).some(d => 
+        new Date(d.date).toDateString() === currentDate.toDateString() && d.name?.includes('Sunday Override')
+      );
+      const isWeekend = isSunday && !isSundayRemoved; // Sunday is non-working unless explicitly marked as working
       const dayOfMonth = currentDate.getDate();
       const dayName = currentDate.toLocaleString('en-US', { weekday: 'short' });
 
       let backgroundColor = '#FFF';
-      if (isHoliday) backgroundColor = '#FFE0E0';
+      if (isHoliday && !isSundayRemoved) backgroundColor = '#FFE0E0'; // Red for holidays, but not for working Sundays
       if (isWeekend) backgroundColor = '#FFE0E0'; // Sunday shown as non-working day (red/pink)
 
       items.push(
@@ -2148,7 +2251,12 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       currentDate.setDate(currentDate.getDate() + i);
 
       const isHoliday = isNonWorkingDay(currentDate, timechart.nonWorkingDays || timechart.publicHolidays || []);
-      const isWeekend = currentDate.getDay() === 0; // Only Sunday is weekend
+      // Check if this is a Sunday that hasn't been explicitly removed from non-working days
+      const isSunday = currentDate.getDay() === 0;
+      const isSundayRemoved = isSunday && (timechart.nonWorkingDays || []).some(d => 
+        new Date(d.date).toDateString() === currentDate.toDateString() && d.name?.includes('Sunday Override')
+      );
+      const isWeekend = isSunday && !isSundayRemoved; // Sunday is non-working unless explicitly marked as working
 
       // For grouped blocks: a cell is "activity" for any segment that covers day i
       let isActivityDay: boolean;
@@ -2162,7 +2270,8 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       }
 
       // Show activity indicator only on working days (not holidays, not weekends)
-      const shouldShowActivity = isActivityDay && !isHoliday && !isWeekend;
+      // But DO show on Sunday Overrides (working Sundays)
+      const shouldShowActivity = isActivityDay && !isHoliday && (!isWeekend || isSundayRemoved);
 
       // Check if there's a daily log for any activity in the group and date
       const hasActivityLog = activitiesArray.some(act =>
@@ -2173,7 +2282,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
       );
 
       let backgroundColor = '#FFF';
-      if (isHoliday) backgroundColor = '#FFE0E0';
+      if (isHoliday && !isSundayRemoved) backgroundColor = '#FFE0E0'; // Red for holidays, but not for working Sundays
       if (isWeekend) backgroundColor = '#F0F0F0';
 
       cells.push(
@@ -2523,6 +2632,13 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 </View>
               </View>
 
+              <TouchableOpacity
+                style={[styles.cell, styles.durationCell, { width: DURATION_LABEL_WIDTH }]}
+                onPress={() => handleOpenDurationEditor(primaryActivity)}
+              >
+                <Text style={styles.durationCellText}>{primaryActivity.duration || 1} days</Text>
+              </TouchableOpacity>
+
               <View style={styles.chartArea}>
                 {renderDateCells([primaryActivity], activityStartDay)}
               </View>
@@ -2626,6 +2742,13 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                     </View>
                   </View>
 
+                  <TouchableOpacity
+                    style={[styles.cell, styles.durationCell, { width: DURATION_LABEL_WIDTH }]}
+                    onPress={() => handleOpenDurationEditor(linkedActivity)}
+                  >
+                    <Text style={styles.durationCellText}>{linkedActivity.duration || 1} days</Text>
+                  </TouchableOpacity>
+
                   <View style={styles.chartArea}>
                     {renderDateCells(linkedActivity, linkedStartDay)}
                   </View>
@@ -2659,22 +2782,6 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
           disabled={user ? !canPerformAction(user.role, 'canAddActivity') : false}
         >
           <Text style={styles.controlButtonText}>+ Activity</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.controlButton,
-            user && !canPerformAction(user.role, 'canAddHoliday') && styles.disabledButton,
-          ]}
-          onPress={() => {
-            if (user && !canPerformAction(user.role, 'canAddHoliday')) {
-              Alert.alert('Permission Denied', 'You do not have permission to add non-working days.');
-              return;
-            }
-            setShowAddHolidayModal(true);
-          }}
-          disabled={user ? !canPerformAction(user.role, 'canAddHoliday') : false}
-        >
-          <Text style={styles.controlButtonText}>+ Non-Working Day</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -2789,6 +2896,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             <View style={[styles.cell, styles.headerLabelCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
               <Text style={styles.monthPlaceholderText}></Text>
             </View>
+            <View style={[styles.cell, styles.headerLabelCell, { width: DURATION_LABEL_WIDTH }]}>
+              <Text style={styles.monthPlaceholderText}></Text>
+            </View>
             <View style={styles.monthHeaderDateContent}>
               {renderMonthHeaders()}
             </View>
@@ -2801,6 +2911,9 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             </View>
             <View style={[styles.cell, styles.headerLabelCell, { width: CONTRACTOR_LABEL_WIDTH }]}>
               <Text style={styles.headerCellText}>CONTRACTOR</Text>
+            </View>
+            <View style={[styles.cell, styles.headerLabelCell, { width: DURATION_LABEL_WIDTH }]}>
+              <Text style={styles.headerCellText}>DURATION</Text>
             </View>
             <View style={styles.headerDateContent}>
               {renderDayHeaders()}
@@ -3774,38 +3887,7 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
             </View>
 
             <ScrollView style={styles.formContainer}>
-              <Text style={styles.sectionHeading}>Non-Working Days ({(timechart.nonWorkingDays || timechart.publicHolidays || []).length})</Text>
-              {(timechart.nonWorkingDays || timechart.publicHolidays || []).length === 0 ? (
-                <Text style={styles.emptyText}>No non-working days added</Text>
-              ) : (
-                (timechart.nonWorkingDays || timechart.publicHolidays || []).map((day) => (
-                  <View key={day.id} style={styles.manageItem}>
-                    <View>
-                      <Text style={styles.manageItemName}>{day.name}</Text>
-                      <Text style={styles.manageItemDate}>
-                        {new Date(day.date).toLocaleDateString()}
-                      </Text>
-                    </View>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        // Check if user has permission to delete non-working days
-                        if (user && !canPerformAction(user.role, 'canDeleteHoliday')) {
-                          Alert.alert('Permission Denied', 'You do not have permission to delete non-working days.');
-                          return;
-                        }
-                        const removeFunction = onRemoveNonWorkingDay || onRemoveHoliday;
-                        if (removeFunction) {
-                          removeFunction(day.id);
-                        }
-                      }}
-                    >
-                      <Text style={styles.removeButton}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))
-              )}
-
-              <Text style={[styles.sectionHeading, { marginTop: 20 }]}>
+              <Text style={[styles.sectionHeading, { marginTop: 0 }]}>
                 Contractors ({timechart.subcontractors.length})
               </Text>
               {timechart.subcontractors.length === 0 ? (
@@ -3813,7 +3895,37 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
               ) : (
                 timechart.subcontractors.map((contractor) => (
                   <View key={contractor.id} style={styles.manageItem}>
-                    <Text style={styles.manageItemName}>{contractor.name}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.manageItemName}>{contractor.name}</Text>
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity
+                          style={styles.contactButton}
+                          onPress={() => {
+                            setSelectedContractorForContact(contractor);
+                            setContactInputType('email');
+                            setContactInputValue(contractor.email || '');
+                            setShowContactInputModal(true);
+                          }}
+                        >
+                          <Text style={styles.contactButtonText}>
+                            {contractor.email ? '✉️ Email' : '+ Email'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.contactButton}
+                          onPress={() => {
+                            setSelectedContractorForContact(contractor);
+                            setContactInputType('phone');
+                            setContactInputValue(contractor.phoneNumber || '');
+                            setShowContactInputModal(true);
+                          }}
+                        >
+                          <Text style={styles.contactButtonText}>
+                            {contractor.phoneNumber ? '📞 Phone' : '+ Phone'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
                     <TouchableOpacity onPress={() => onRemoveSubcontractor(contractor.id)}>
                       <Text style={styles.removeButton}>✕</Text>
                     </TouchableOpacity>
@@ -4276,15 +4388,31 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
         <View style={styles.autoLinkOverlay}>
           <View style={styles.autoLinkPromptCard}>
             <Text style={styles.autoLinkTitle}>
-              {nonWorkingDayPending?.isRemoving ? 'Remove Non-Working Day?' : 'Mark Non-Working Day?'}
+              {nonWorkingDayPending?.isSunday 
+                ? nonWorkingDayPending?.isSundayOverride
+                  ? 'Revert Sunday to Non-Working Day?'
+                  : 'Convert Sunday to Working Day?'
+                : nonWorkingDayPending?.isRemoving 
+                  ? 'Remove Non-Working Day?'
+                  : 'Mark Non-Working Day?'}
             </Text>
             
             <Text style={styles.autoLinkMessage}>
-              {nonWorkingDayPending?.isRemoving
-                ? `Remove non-working day status from `
-                : `Mark `}
+              {nonWorkingDayPending?.isSunday
+                ? nonWorkingDayPending?.isSundayOverride
+                  ? `Revert `
+                  : `Convert `
+                : nonWorkingDayPending?.isRemoving
+                  ? `Remove non-working day status from `
+                  : `Mark `}
               <Text style={styles.autoLinkActivityName}>{nonWorkingDayPending?.displayDate}</Text>
-              {nonWorkingDayPending?.isRemoving ? '?' : ' as a non-working day?'}
+              {nonWorkingDayPending?.isSunday
+                ? nonWorkingDayPending?.isSundayOverride
+                  ? ' back to a non-working day?'
+                  : ' to a regular working day?'
+                : nonWorkingDayPending?.isRemoving 
+                  ? '?' 
+                  : ' as a non-working day?'}
             </Text>
 
             <View style={styles.autoLinkButtonContainer}>
@@ -4308,40 +4436,198 @@ export const UnifiedTimeChartEditor: React.FC<UnifiedTimeChartEditorProps> = ({
                 ]}
                 onPress={() => {
                   if (nonWorkingDayPending) {
+                    console.log('🔵 [NonWorkingDay-Button] Button pressed:', {
+                      isRemoving: nonWorkingDayPending.isRemoving,
+                      isSunday: nonWorkingDayPending.isSunday,
+                      isSundayOverride: nonWorkingDayPending.isSundayOverride,
+                      dateString: nonWorkingDayPending.dateString,
+                    });
+                    
                     if (nonWorkingDayPending.isRemoving) {
-                      console.log('🟢 [NonWorkingDay] Removing non-working day:', nonWorkingDayPending.dateString);
-                      const removeFunction = onRemoveNonWorkingDay || onRemoveHoliday;
-                      if (removeFunction) {
-                        const dayToRemove = (timechart.nonWorkingDays || []).find(d => {
-                          const dDate = new Date(d.date);
-                          return dDate.toISOString().split('T')[0] === nonWorkingDayPending.dateString;
-                        });
-                        if (dayToRemove && dayToRemove.id) {
-                          removeFunction(dayToRemove.id);
+                      // Handle removal cases
+                      if (nonWorkingDayPending.isSundayOverride) {
+                        // Remove Sunday Override to revert to default non-working
+                        console.log('🟢 [NonWorkingDay] Removing Sunday Override (reverting to non-working):', nonWorkingDayPending.dateString);
+                        const removeFunction = onRemoveNonWorkingDay || onRemoveHoliday;
+                        if (removeFunction) {
+                          console.log('🔍 [NonWorkingDay] Current nonWorkingDays:', timechart.nonWorkingDays);
+                          const dayToRemove = (timechart.nonWorkingDays || []).find(d => {
+                            const dDate = new Date(d.date);
+                            const dDateStr = dDate.toISOString().split('T')[0];
+                            console.log(`🔍 [NonWorkingDay] Comparing: "${dDateStr}" === "${nonWorkingDayPending.dateString}" && includes "Sunday Override"? ${d.name?.includes('Sunday Override')}`);
+                            return dDateStr === nonWorkingDayPending.dateString &&
+                                   d.name?.includes('Sunday Override');
+                          });
+                          console.log('🔍 [NonWorkingDay] Day to remove:', dayToRemove);
+                          if (dayToRemove && dayToRemove.id) {
+                            console.log('✅ [NonWorkingDay] Calling removeFunction with id:', dayToRemove.id);
+                            removeFunction(dayToRemove.id);
+                            console.log('✅ [NonWorkingDay] removeFunction call completed');
+                          } else {
+                            console.log('❌ [NonWorkingDay] No matching day found to remove');
+                          }
+                        }
+                      } else {
+                        // Remove explicit non-working day entry
+                        console.log('🟢 [NonWorkingDay] Removing non-working day:', nonWorkingDayPending.dateString);
+                        const removeFunction = onRemoveNonWorkingDay || onRemoveHoliday;
+                        if (removeFunction) {
+                          const dayToRemove = (timechart.nonWorkingDays || []).find(d => {
+                            const dDate = new Date(d.date);
+                            return dDate.toISOString().split('T')[0] === nonWorkingDayPending.dateString &&
+                                   !d.name?.includes('Sunday Override');
+                          });
+                          if (dayToRemove && dayToRemove.id) {
+                            console.log('✅ [NonWorkingDay] Calling removeFunction for non-working day with id:', dayToRemove.id);
+                            removeFunction(dayToRemove.id);
+                          }
                         }
                       }
                     } else {
-                      console.log('🟢 [NonWorkingDay] Adding non-working day:', nonWorkingDayPending.dateString);
-                      const addFunction = onAddNonWorkingDay || onAddHoliday;
-                      if (addFunction) {
-                        const currentDate = new Date(timechart.startDate);
-                        currentDate.setDate(currentDate.getDate() + nonWorkingDayPending.dayIndex);
-                        addFunction({
-                          id: `non-working-${Date.now()}`,
-                          date: currentDate,
-                          name: `Non-Working Day`,
-                        });
+                      // For Sundays: add a "Sunday Override" entry to mark it as working
+                      // For other days: add as regular non-working day
+                      if (nonWorkingDayPending.isSunday) {
+                        console.log('🟢 [NonWorkingDay] Converting Sunday to working day:', nonWorkingDayPending.dateString);
+                        const addFunction = onAddNonWorkingDay || onAddHoliday;
+                        if (addFunction) {
+                          const currentDate = new Date(timechart.startDate);
+                          currentDate.setDate(currentDate.getDate() + nonWorkingDayPending.dayIndex);
+                          addFunction({
+                            id: `sunday-override-${Date.now()}`,
+                            date: currentDate,
+                            name: `Sunday Override - Working Day`,
+                          });
+                          console.log('✅ [NonWorkingDay] Added Sunday Override');
+                        }
+                      } else {
+                        console.log('🟢 [NonWorkingDay] Adding non-working day:', nonWorkingDayPending.dateString);
+                        const addFunction = onAddNonWorkingDay || onAddHoliday;
+                        if (addFunction) {
+                          const currentDate = new Date(timechart.startDate);
+                          currentDate.setDate(currentDate.getDate() + nonWorkingDayPending.dayIndex);
+                          addFunction({
+                            id: `non-working-${Date.now()}`,
+                            date: currentDate,
+                            name: `Non-Working Day`,
+                          });
+                        }
                       }
                     }
+                    
+                    // Close modal and reset state
+                    console.log('⏹️ [NonWorkingDay] Closing modal and resetting state');
+                    setShowNonWorkingDayPrompt(false);
+                    setNonWorkingDayPending(null);
                   }
-                  
-                  setShowNonWorkingDayPrompt(false);
-                  setNonWorkingDayPending(null);
                 }}
               >
                 <Text style={styles.autoLinkButtonTextYes}>
-                  {nonWorkingDayPending?.isRemoving ? 'Yes, Remove' : 'Yes, Mark'}
+                  {nonWorkingDayPending?.isSunday
+                    ? nonWorkingDayPending?.isSundayOverride
+                      ? 'Yes, Revert'
+                      : 'Yes, Convert'
+                    : nonWorkingDayPending?.isRemoving 
+                      ? 'Yes, Remove' 
+                      : 'Yes, Mark'}
                 </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Duration Editor Modal */}
+      <Modal
+        visible={showDurationModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDurationModal(false)}
+      >
+        <View style={styles.durationEditorOverlay}>
+          <View style={styles.durationEditorContainer}>
+            <Text style={styles.durationEditorTitle}>
+              {selectedActivityForDuration?.name}
+            </Text>
+            
+            <View style={styles.durationDisplayContainer}>
+              <Text style={styles.durationDisplayValue}>{tempDuration}</Text>
+              <Text style={styles.durationDisplayLabel}>days</Text>
+            </View>
+            
+            <View style={styles.durationButtonsRow}>
+              <TouchableOpacity
+                style={styles.durationButton}
+                onPress={() => setTempDuration(Math.max(1, tempDuration - 1))}
+              >
+                <Text style={styles.durationButtonText}>−</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.durationButton}
+                onPress={() => setTempDuration(tempDuration + 1)}
+              >
+                <Text style={styles.durationButtonText}>+</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.durationActionButtonsRow}>
+              <TouchableOpacity
+                style={[styles.durationActionButton, styles.durationCancelButton]}
+                onPress={() => setShowDurationModal(false)}
+              >
+                <Text style={styles.durationActionButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.durationActionButton, styles.durationSaveButton]}
+                onPress={handleSaveDuration}
+              >
+                <Text style={[styles.durationActionButtonText, styles.durationSaveButtonText]}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Contact Info Input Modal */}
+      <Modal
+        visible={showContactInputModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowContactInputModal(false)}
+      >
+        <View style={styles.contactInputOverlay}>
+          <View style={styles.contactInputContainer}>
+            <Text style={styles.contactInputTitle}>
+              {contactInputType === 'email' ? 'Add Email' : 'Add Phone Number'}
+            </Text>
+            
+            <Text style={styles.contactInputLabel}>
+              {contactInputType === 'email' ? 'Email Address' : 'Phone Number'}
+            </Text>
+            <TextInput
+              style={styles.contactInputField}
+              placeholder={contactInputType === 'email' ? 'name@example.com' : '(555) 123-4567'}
+              placeholderTextColor="#AAA"
+              value={contactInputValue}
+              onChangeText={setContactInputValue}
+              keyboardType={contactInputType === 'email' ? 'email-address' : 'phone-pad'}
+              autoFocus
+            />
+            
+            <View style={styles.contactInputButtonsRow}>
+              <TouchableOpacity
+                style={[styles.contactInputButton, styles.contactInputCancelButton]}
+                onPress={() => setShowContactInputModal(false)}
+              >
+                <Text style={styles.contactInputButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.contactInputButton, styles.contactInputSaveButton]}
+                onPress={handleSaveContactInfo}
+              >
+                <Text style={[styles.contactInputButtonText, styles.contactInputSaveButtonText]}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -5626,4 +5912,193 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  // Contact information buttons
+  contactButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#E8F1FF',
+    borderWidth: 1,
+    borderColor: '#0066CC',
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactButtonText: {
+    color: '#0066CC',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  // Duration column styles
+  durationCell: {
+    backgroundColor: '#F0F7FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  durationCellText: {
+    color: '#0066CC',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  // Duration editor modal styles
+  durationEditorOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  durationEditorContainer: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 24,
+    width: '80%',
+    maxWidth: 320,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  durationEditorTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  durationDisplayContainer: {
+    backgroundColor: '#F0F7FF',
+    borderRadius: 8,
+    paddingVertical: 20,
+    paddingHorizontal: 30,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  durationDisplayValue: {
+    fontSize: 48,
+    fontWeight: '700',
+    color: '#0066CC',
+  },
+  durationDisplayLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  durationButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  durationButton: {
+    width: 50,
+    height: 50,
+    backgroundColor: '#0066CC',
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  durationButtonText: {
+    fontSize: 28,
+    color: '#FFF',
+    fontWeight: '300',
+  },
+  durationActionButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  durationActionButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  durationCancelButton: {
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#DDD',
+  },
+  durationSaveButton: {
+    backgroundColor: '#0066CC',
+  },
+  durationActionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  durationSaveButtonText: {
+    color: '#FFF',
+  },
+  // Contact info input modal styles
+  contactInputOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  contactInputContainer: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 24,
+    width: '85%',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  contactInputTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  contactInputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 8,
+  },
+  contactInputField: {
+    borderWidth: 1,
+    borderColor: '#DDD',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 20,
+    backgroundColor: '#F9F9F9',
+  },
+  contactInputButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  contactInputButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactInputCancelButton: {
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#DDD',
+  },
+  contactInputSaveButton: {
+    backgroundColor: '#0066CC',
+  },
+  contactInputButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  contactInputSaveButtonText: {
+    color: '#FFF',
+  },
 });
+

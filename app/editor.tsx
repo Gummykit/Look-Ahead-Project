@@ -99,14 +99,14 @@ export default function EditorScreen() {
     });
   };
 
-  const handleUpdateSubcontractor = (id: string, name: string) => {
+  const handleUpdateSubcontractor = (id: string, name: string, email?: string, phoneNumber?: string) => {
     if (!timechart) return;
     setTimechart(prev => {
       if (!prev) return prev;
       return {
         ...prev,
         subcontractors: prev.subcontractors.map(s =>
-          s.id === id ? { ...s, name } : s
+          s.id === id ? { ...s, name, ...(email !== undefined && { email }), ...(phoneNumber !== undefined && { phoneNumber }) } : s
         ),
         // Also update the cached name on any activities assigned to this contractor
         activities: prev.activities.map(a =>

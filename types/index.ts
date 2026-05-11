@@ -14,6 +14,8 @@ export interface Subcontractor {
   id: string;
   name: string;
   isActive: boolean;
+  email?: string;
+  phoneNumber?: string;
 }
 
 export interface FloorLevel {

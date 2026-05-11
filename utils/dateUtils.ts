@@ -110,3 +110,43 @@ export const getMonthsInRange = (startDate: Date, endDate: Date): { month: strin
 
   return months;
 };
+
+// Count working days between two dates, excluding non-working days but including Sunday Overrides
+export const countWorkingDays = (
+  startDate: Date,
+  endDate: Date,
+  nonWorkingDays: { date: Date; name?: string }[] = []
+): number => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  let workingDays = 0;
+  const current = new Date(start);
+
+  while (current <= end) {
+    const isSunday = current.getDay() === 0;
+    // Check if this is a Sunday Override (working Sunday)
+    const isSundayOverride = isSunday && nonWorkingDays.some(d => {
+      const dayDate = new Date(d.date);
+      dayDate.setHours(0, 0, 0, 0);
+      return dayDate.getTime() === current.getTime() && d.name?.includes('Sunday Override');
+    });
+    // Check if it's a non-working day (but not a Sunday Override)
+    const isNonWorking = nonWorkingDays.some(d => {
+      const dayDate = new Date(d.date);
+      dayDate.setHours(0, 0, 0, 0);
+      return dayDate.getTime() === current.getTime() && !d.name?.includes('Sunday Override');
+    });
+
+    // Count the day if it's not a non-working day (or if it's a Sunday Override)
+    if (!isNonWorking || isSundayOverride) {
+      workingDays++;
+    }
+
+    current.setDate(current.getDate() + 1);
+  }
+
+  return workingDays;
+};
